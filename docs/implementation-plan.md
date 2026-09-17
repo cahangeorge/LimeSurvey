@@ -170,14 +170,14 @@ module check remain mandatory on the native Coolify host before deployment.
 **Description:** Add Nginx, PHP-FPM, and MariaDB 11.4 services with pinned images, health checks, private service networking, explicit persistent named volumes, secret-safe environment variables, and dependency conditions. Do not publish the database port.
 
 **Acceptance criteria:**
-- [ ] `compose.yaml` renders without warnings and contains no literal credentials.
-- [ ] Database is private, health-gated, and persists across container replacement.
-- [ ] Nginx serves public assets and routes PHP requests without exposing internal files.
+- [x] `compose.yaml` renders without warnings and contains no literal credentials.
+- [x] Database is private, health-gated, and persists across container replacement.
+- [x] Nginx serves public assets and routes PHP requests without exposing internal files.
 
 **Verification:**
-- [ ] `docker compose config --quiet`.
-- [ ] `docker compose up -d && docker compose ps` shows all services healthy.
-- [ ] A local HTTP request reaches the LimeSurvey installer/application entry point.
+- [x] `docker compose config --quiet`.
+- [x] `docker compose up -d && docker compose ps` shows all services healthy.
+- [x] A local HTTP request reaches the LimeSurvey installer/application entry point.
 
 **Dependencies:** Task 4.
 
@@ -192,10 +192,10 @@ module check remain mandatory on the native Coolify host before deployment.
 ### Checkpoint B: Local runtime foundation
 
 - [ ] ARM64 build passes.
-- [ ] Compose renders and all services become healthy.
-- [ ] Required PHP modules are present.
-- [ ] Restarting containers preserves a locally initialized database marker.
-- [ ] `git diff --check` and secret scan pass.
+- [x] Compose renders and all services become healthy.
+- [x] Required PHP modules are present.
+- [x] Restarting containers preserves a locally initialized database marker.
+- [x] `git diff --check` and secret scan pass.
 
 ### Phase 3: Resend email integration
 

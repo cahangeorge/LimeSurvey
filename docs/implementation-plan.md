@@ -116,14 +116,14 @@ Approved spec and plan
 **Description:** Create/push `cahangeorge/LimeSurvey` as a public deployment wrapper, carry forward the approved spec and plan, and document the immutable upstream version, supported architecture, boundaries, and exact local commands. Repository creation is allowed by the approved spec but occurs only after this plan is approved.
 
 **Acceptance criteria:**
-- [ ] Public repository exists with default branch protection-compatible history and no secrets.
-- [ ] README identifies the pinned upstream tag and commit and explains that this is a deployment wrapper.
-- [ ] Repository-local `AGENTS.md` contains commands, architecture, and production safety rules.
+- [x] Public repository exists with default branch protection-compatible history and no secrets.
+- [x] README identifies the pinned upstream tag and commit and explains that this is a deployment wrapper.
+- [x] Repository-local `AGENTS.md` contains commands, architecture, and production safety rules.
 
 **Verification:**
-- [ ] `git status --short --branch` is clean after the authorized commit/push.
-- [ ] `git log -1 --oneline` and GitHub default branch point to the same commit.
-- [ ] Secret scan finds no credential-like values.
+- [x] `git status --short --branch` is clean after the authorized commit/push.
+- [x] `git log -1 --oneline` and GitHub default branch point to the same commit.
+- [x] Secret scan finds no credential-like values.
 
 **Dependencies:** Approved implementation plan.
 
@@ -141,14 +141,19 @@ Approved spec and plan
 **Description:** Add an ARM64-compatible PHP 8.3 FPM image that fetches/verifies the immutable LimeSurvey source, installs required extensions, uses a non-root runtime where feasible, and exposes a deterministic health surface. Keep initialization logic separate and fail-fast.
 
 **Acceptance criteria:**
-- [ ] Image build is pinned to the approved upstream release and verifies the expected source revision/checksum.
+- [x] Image build is pinned to the approved upstream release and verifies the expected source revision/checksum.
 - [ ] Required LimeSurvey PHP extensions are present on ARM64.
-- [ ] Entrypoint is idempotent, checks required variables, and does not print secrets.
+- [x] Entrypoint is idempotent, checks required variables, and does not print secrets.
 
 **Verification:**
 - [ ] `docker buildx build --load --platform linux/arm64 -f docker/php/Dockerfile .`
-- [ ] `docker run --rm <image> php -m` contains the required modules.
-- [ ] `sh -n docker/entrypoint.sh` and PHP syntax checks pass.
+- [x] `docker run --rm <image> php -m` contains the required modules.
+- [x] `sh -n docker/entrypoint.sh` and PHP syntax checks pass.
+
+**Current evidence:** The pinned image builds and its runtime/module/entrypoint checks pass on
+`linux/amd64`. The local ARM64 build reaches the first `RUN` instruction but cannot execute it
+because this workstation has no ARM64 binfmt emulator (`Exec format error`). The ARM64 build and
+module check remain mandatory on the native Coolify host before deployment.
 
 **Dependencies:** Task 3.
 

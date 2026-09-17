@@ -1,0 +1,32 @@
+# Runtime configuration and secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Database, export, and backup artifacts
+*.dump
+*.dmp
+*.sql
+*.sql.gz
+*.tar.gz
+backups/
+exports/
+
+# PHP dependencies and test caches
+vendor/
+.phpunit.cache/
+.phpunit.result.cache
+coverage/
+
+# Build and local runtime output
+.build/
+dist/
+tmp/
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store

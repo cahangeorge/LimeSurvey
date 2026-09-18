@@ -79,6 +79,19 @@ compose exec -T nginx wget -qO- http://127.0.0.1/healthz \
 
 compose exec -T nginx wget -qO /dev/null http://127.0.0.1/
 
+compose exec -T app sh -eu -c '
+    test -f /var/www/html/plugins/ResendEmail/ResendEmail.php
+    test -f /var/www/html/plugins/ResendEmail/ResendClient.php
+    test -f /var/www/html/plugins/ResendEmail/config.xml
+    php -r '\''
+        $config = simplexml_load_file("/var/www/html/plugins/ResendEmail/config.xml");
+        if ($config === false || (string) $config->metadata->name !== "ResendEmail") {
+            fwrite(STDERR, "ResendEmail metadata is unavailable.\n");
+            exit(1);
+        }
+    '\''
+'
+
 if compose exec -T nginx wget -qO /dev/null \
     http://127.0.0.1/application/config/config.php; then
     echo 'Nginx exposed an internal configuration file' >&2

@@ -30,6 +30,9 @@ services:
       DB_NAME: ${DB_NAME:?Set DB_NAME}
       DB_USER: ${DB_USER:?Set DB_USER}
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      RESEND_API_KEY: ${RESEND_API_KEY:?Set RESEND_API_KEY}
+      RESEND_FROM_EMAIL: ${RESEND_FROM_EMAIL:?Set RESEND_FROM_EMAIL}
+      RESEND_FROM_NAME: ${RESEND_FROM_NAME:-}
     volumes:
       - app-code-v7-1-1:/var/www/html
       - app-config:/var/www/html/application/config

@@ -22,4 +22,18 @@ do
     fi
 done
 
+managed_plugin_source=/opt/limesurvey-managed-plugins/ResendEmail
+managed_plugin_target=/var/www/html/plugins/ResendEmail
+managed_plugin_staging=/var/www/html/plugins/.ResendEmail.staging.$$
+
+if [ -d "$managed_plugin_source" ]; then
+    rm -rf "$managed_plugin_staging"
+    cp -R "$managed_plugin_source" "$managed_plugin_staging"
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R www-data:www-data "$managed_plugin_staging"
+    fi
+    rm -rf "$managed_plugin_target"
+    mv "$managed_plugin_staging" "$managed_plugin_target"
+fi
+
 exec "$@"

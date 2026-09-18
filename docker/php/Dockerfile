@@ -97,6 +97,7 @@ RUN set -eux; \
     chown -R www-data:www-data application/config upload tmp plugins themes
 
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/zz-limesurvey-production.ini
+COPY --chown=www-data:www-data plugins/ResendEmail /opt/limesurvey-managed-plugins/ResendEmail
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/limesurvey-entrypoint
 
 EXPOSE 9000

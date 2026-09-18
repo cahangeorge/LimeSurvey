@@ -51,7 +51,7 @@ jobs:
           docker run --rm \
             -v "${PWD}:/app" \
             -w /app \
-            composer:2.8.12 \
+            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
             composer install --no-interaction --no-progress --prefer-dist
 
       - name: Run no-network Resend tests
@@ -61,7 +61,7 @@ jobs:
           docker run --rm --network none \
             -v "${PWD}:/app" \
             -w /app \
-            composer:2.8.12 \
+            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
             sh -c 'find docker plugins tests -name "*.php" -print0 | xargs -0 -n1 php -l && vendor/bin/phpunit tests/ResendEmailPluginTest.php'
 
       - name: Build the pinned LimeSurvey image natively
@@ -110,9 +110,11 @@ jobs:
             'gh''[opusr]_[A-Za-z0-9]{20,}'
             'RESEND_API_''KEY=.{8}'
             'POSTGRES_''PASSWORD=.{8}'
+            'DB_''PASSWORD=.{8}'
+            'DB_ROOT_''PASSWORD=.{8}'
           )
           for pattern in "${patterns[@]}"; do
-            if git grep -IlE "$pattern"; then
+            if git grep -IlE "$pattern" -- . ':!.env.example'; then
               echo 'Credential-like tracked content found.' >&2
               exit 1
             fi

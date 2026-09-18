@@ -44,7 +44,7 @@ Create a new Docker Compose application from this repository. Do not alter the e
 Use:
 
 - repository: `cahangeorge/LimeSurvey`
-- branch: `main`
+- revision: immutable release tag `v7.1.1-260914-omnestack.1`
 - Compose file: `/compose.yaml`
 - public service: `nginx`
 - container port: `80`
@@ -65,6 +65,10 @@ Create these Coolify variables and mark every credential as secret:
 Do not set `APP_IMAGE` unless deploying a separately built immutable image. The Compose database has no published host port by design.
 
 Deploy beside Formbricks. Confirm the native ARM64 build completes and all three services become healthy before adding migration traffic.
+
+Before deployment, verify that the release tag resolves to the reviewed commit recorded in the
+release evidence. Do not configure Coolify to follow mutable `main` or enable automatic deployment
+from later pushes.
 
 ## 3. Initialize LimeSurvey
 

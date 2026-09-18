@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use LimeSurvey\PluginManager\EmailPluginBase;
 use Omnestack\LimeSurvey\Resend\ResendClient;
+use Omnestack\LimeSurvey\Resend\UnsupportedAttachmentException;
 
 require_once __DIR__ . '/ResendClient.php';
 
@@ -60,6 +61,12 @@ class ResendEmail extends EmailPluginBase
             $event->set('send', false);
             $event->set('error', null);
             $event->set('message', $messageId);
+        } catch (UnsupportedAttachmentException $exception) {
+            if (method_exists($this, 'log')) {
+                $this->log('Resend email rejected an unsupported attachment.', CLogger::LEVEL_WARNING);
+            }
+            $event->set('send', false);
+            $event->set('error', $exception->getMessage());
         } catch (\Throwable $exception) {
             if (method_exists($this, 'log')) {
                 $this->log('Resend email delivery failed.', CLogger::LEVEL_WARNING);

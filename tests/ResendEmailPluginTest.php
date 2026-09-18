@@ -223,6 +223,25 @@ namespace Tests {
             self::assertStringNotContainsString(self::API_KEY, (string) $event->get('error'));
         }
 
+        public function testPluginReportsUnsupportedAttachmentsWithoutCallingNetwork(): void
+        {
+            $http = new FakeHttpClient();
+            $plugin = $this->pluginWithClient(new ResendClient(self::API_KEY, $http));
+            $event = new StubPluginEvent([
+                'mailer' => new StubMailer([['path' => '/tmp/example.pdf']]),
+            ]);
+            $plugin->setEventForTest($event);
+
+            $plugin->beforeEmailDispatch();
+
+            self::assertFalse($event->get('send'));
+            self::assertSame(
+                'Email attachments are not supported by the ResendEmail plugin.',
+                $event->get('error')
+            );
+            self::assertSame([], $http->requests);
+        }
+
         /** @return array<string, mixed> */
         private function plainMessage(): array
         {
@@ -246,7 +265,7 @@ namespace Tests {
             );
         }
 
-        private function pluginWithClient(StubResendClient $client): object
+        private function pluginWithClient(object $client): object
         {
             $pluginPath = dirname(__DIR__) . '/plugins/ResendEmail/ResendEmail.php';
             self::assertFileExists(
@@ -262,7 +281,7 @@ namespace Tests {
 
             $plugin = new \ResendEmail();
             $factory = new ReflectionProperty($plugin, 'clientFactory');
-            $factory->setValue($plugin, static fn (): StubResendClient => $client);
+            $factory->setValue($plugin, static fn (): object => $client);
 
             return $plugin;
         }
@@ -293,6 +312,11 @@ namespace Tests {
 
     final class StubMailer
     {
+        /** @param list<array<string, mixed>> $attachments */
+        public function __construct(private array $attachments = [])
+        {
+        }
+
         public string $Subject = 'Subject';
 
         public string $Body = '<p>Body</p>';
@@ -326,7 +350,7 @@ namespace Tests {
 
         public function getAttachments(): array
         {
-            return [];
+            return $this->attachments;
         }
 
         public function getIsHtml(): bool

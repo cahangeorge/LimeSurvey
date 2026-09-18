@@ -9,6 +9,10 @@ use JsonException;
 use RuntimeException;
 use Throwable;
 
+final class UnsupportedAttachmentException extends RuntimeException
+{
+}
+
 final class ResendClient
 {
     private const ENDPOINT = 'https://api.resend.com/emails';
@@ -39,7 +43,9 @@ final class ResendClient
         }
 
         if (!empty($message['attachments'])) {
-            throw new RuntimeException('Email attachments are not supported by the ResendEmail plugin.');
+            throw new UnsupportedAttachmentException(
+                'Email attachments are not supported by the ResendEmail plugin.'
+            );
         }
 
         $payload = $this->buildPayload($message);

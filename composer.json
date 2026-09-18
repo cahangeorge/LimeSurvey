@@ -1,0 +1,22 @@
+{
+  "name": "cahangeorge/limesurvey-coolify",
+  "description": "Deployment wrapper and Resend email plugin for LimeSurvey",
+  "license": "GPL-2.0-or-later",
+  "require-dev": {
+    "phpunit/phpunit": "^11.5"
+  },
+  "autoload": {
+    "psr-4": {
+      "Omnestack\\LimeSurvey\\Resend\\": "plugins/ResendEmail/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/"
+    }
+  },
+  "config": {
+    "allow-plugins": false,
+    "sort-packages": true
+  }
+}

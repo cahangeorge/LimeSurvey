@@ -113,8 +113,17 @@ jobs:
             'DB_''PASSWORD=.{8}'
             'DB_ROOT_''PASSWORD=.{8}'
           )
+          allowed=(
+            '.env.example:DB_''PASSWORD=example-only-not-a-secret'
+            '.env.example:DB_ROOT_''PASSWORD=example-root-only-not-a-secret'
+            '.env.example:RESEND_API_''KEY=example'
+          )
           for pattern in "${patterns[@]}"; do
-            if git grep -IlE "$pattern" -- . ':!.env.example'; then
+            matches=$(git grep -E "$pattern" -- . || true)
+            for example in "${allowed[@]}"; do
+              matches=$(printf '%s\n' "$matches" | grep -Fvx "$example" || true)
+            done
+            if [ -n "$matches" ]; then
               echo 'Credential-like tracked content found.' >&2
               exit 1
             fi

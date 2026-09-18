@@ -142,18 +142,19 @@ Approved spec and plan
 
 **Acceptance criteria:**
 - [x] Image build is pinned to the approved upstream release and verifies the expected source revision/checksum.
-- [ ] Required LimeSurvey PHP extensions are present on ARM64.
+- [x] Required LimeSurvey PHP extensions are present on ARM64.
 - [x] Entrypoint is idempotent, checks required variables, and does not print secrets.
 
 **Verification:**
-- [ ] `docker buildx build --load --platform linux/arm64 -f docker/php/Dockerfile .`
+- [x] Native `aarch64` build in GitHub Actions release gate.
 - [x] `docker run --rm <image> php -m` contains the required modules.
 - [x] `sh -n docker/entrypoint.sh` and PHP syntax checks pass.
 
-**Current evidence:** The pinned image builds and its runtime/module/entrypoint checks pass on
-`linux/amd64`. The local ARM64 build reaches the first `RUN` instruction but cannot execute it
-because this workstation has no ARM64 binfmt emulator (`Exec format error`). The ARM64 build and
-module check remain mandatory on the native Coolify host before deployment.
+**Current evidence:** GitHub Actions run
+[35342067109](https://github.com/cahangeorge/LimeSurvey/actions/runs/35342067109)
+passed on commit `2fb6bdb` using a native `aarch64` runner. It completed the
+pinned image build, required PHP module checks, 10 tests/56 assertions, the
+Compose smoke test, and the secret scan.
 
 **Dependencies:** Task 3.
 
@@ -191,7 +192,7 @@ module check remain mandatory on the native Coolify host before deployment.
 
 ### Checkpoint B: Local runtime foundation
 
-- [ ] ARM64 build passes.
+- [x] ARM64 build passes.
 - [x] Compose renders and all services become healthy.
 - [x] Required PHP modules are present.
 - [x] Restarting containers preserves a locally initialized database marker.
@@ -239,10 +240,10 @@ client/plugin implementation, with no bootstrap or fixture errors.
 - [x] `find plugins tests -name '*.php' -print0 | xargs -0 -n1 php -l`.
 - [x] Local LimeSurvey plugin list shows `ResendEmail` available.
 
-**Current evidence:** PHPUnit passes with 9 tests and 51 assertions. A disposable initialized
-LimeSurvey stack discovered `ResendEmail` through the upstream plugin manager, installed it, set
-it active, and loaded it successfully. Production activation remains an explicit post-install
-runbook step.
+**Current evidence:** GitHub Actions run 35342067109 passed the no-network suite
+with 10 tests and 56 assertions. A disposable initialized LimeSurvey stack discovered
+`ResendEmail` through the upstream plugin manager, installed it, set it active, and loaded it
+successfully. Production activation remains an explicit post-install runbook step.
 
 **Dependencies:** Task 6.
 
@@ -277,10 +278,16 @@ runbook step.
 
 ### Checkpoint C: Repository release candidate
 
-- [ ] Compose, PHP syntax, plugin unit tests, build, and local smoke checks pass.
+**Status: HOLD.** Independent review found direct Nginx exposure of runtime and
+respondent-upload files plus a secret-scan exclusion. Local remediation is pending
+a successful CI re-run and independent re-review. No immutable wrapper release tag
+exists yet.
+
+- [ ] Compose, PHP syntax, plugin unit tests, build, and local smoke checks pass after remediation.
 - [x] No secrets are tracked or exposed in logs.
 - [x] Runbook is executable and rollback-safe.
 - [ ] Independent code review finds no unresolved high/critical issue.
+- [ ] A real immutable wrapper release tag exists.
 - [ ] Only then proceed to Coolify.
 
 ### Phase 4: Parallel Coolify deployment and acceptance

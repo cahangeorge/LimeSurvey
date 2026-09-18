@@ -4,7 +4,16 @@ Deployment wrapper for running [LimeSurvey Community Edition](https://github.com
 
 ## Status
 
-The pinned local runtime and Resend plugin are implemented. The ARM64 release build and production service have not yet been validated, and Formbricks remains online. See [`docs/implementation-plan.md`](docs/implementation-plan.md) for the gated rollout. Operational inventories and backup evidence are kept outside this public repository.
+The pinned local runtime and Resend plugin are implemented. GitHub Actions run
+[35342067109](https://github.com/cahangeorge/LimeSurvey/actions/runs/35342067109)
+passed on commit `2fb6bdb` with a native `aarch64` build, required PHP module
+checks, 10 tests/56 assertions, the Compose smoke test, and the secret scan.
+Independent review then found Nginx direct-access and secret-scan blockers; their
+local remediation still needs CI re-run and independent re-review. Checkpoint C
+remains on hold, no immutable wrapper release tag exists yet, and Formbricks
+remains online. See [`docs/implementation-plan.md`](docs/implementation-plan.md)
+for the gated rollout. Operational inventories and backup evidence are kept
+outside this public repository.
 
 ## Pinned upstream
 

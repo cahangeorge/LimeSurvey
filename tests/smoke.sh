@@ -4,12 +4,25 @@ set -eu
 project_name=${COMPOSE_PROJECT_NAME:-limesurvey-smoke}
 env_file=${ENV_FILE:-.env.example}
 keep_stack=${KEEP_SMOKE_STACK:-0}
+runtime_fixture_dir=/var/www/html/tmp/runtime/limesurvey-nginx-protection-smoke-2fb6bdb
+runtime_fixture=$runtime_fixture_dir/limesurvey-nginx-protection-smoke-2fb6bdb.txt
+upload_survey_dir=/var/www/html/upload/surveys/987654321
+upload_files_dir=$upload_survey_dir/files
+upload_fixture=$upload_files_dir/fu_limesurvey-nginx-protection-smoke-2fb6bdb.txt
 
 compose() {
     docker compose --project-name "$project_name" --env-file "$env_file" "$@"
 }
 
 cleanup() {
+    compose exec -T app sh -c '
+        rm -f -- "$1" "$2"
+        rmdir -- "$3" 2>/dev/null || true
+        rmdir -- "$4" 2>/dev/null || true
+        rmdir -- "$5" 2>/dev/null || true
+    ' sh "$runtime_fixture" "$upload_fixture" "$runtime_fixture_dir" \
+        "$upload_files_dir" "$upload_survey_dir" >/dev/null 2>&1 || true
+
     if [ "$keep_stack" != 1 ]; then
         compose down --remove-orphans >/dev/null 2>&1 || true
     fi
@@ -80,6 +93,12 @@ compose exec -T nginx wget -qO- http://127.0.0.1/healthz \
 compose exec -T nginx wget -qO /dev/null http://127.0.0.1/
 
 compose exec -T app sh -eu -c '
+    mkdir -p "$1" "$2"
+    printf "%s\n" nginx-protection-smoke > "$3"
+    printf "%s\n" nginx-protection-smoke > "$4"
+' sh "$runtime_fixture_dir" "$upload_files_dir" "$runtime_fixture" "$upload_fixture"
+
+compose exec -T app sh -eu -c '
     test -f /var/www/html/plugins/ResendEmail/ResendEmail.php
     test -f /var/www/html/plugins/ResendEmail/ResendClient.php
     test -f /var/www/html/plugins/ResendEmail/config.xml
@@ -101,6 +120,18 @@ fi
 if compose exec -T nginx wget -qO /dev/null \
     http://127.0.0.1/open-api-gen.php; then
     echo 'Nginx executed a non-front-controller PHP script' >&2
+    exit 1
+fi
+
+if compose exec -T nginx wget -qO /dev/null \
+    http://127.0.0.1/tmp/runtime/limesurvey-nginx-protection-smoke-2fb6bdb/limesurvey-nginx-protection-smoke-2fb6bdb.txt; then
+    echo 'Nginx exposed a LimeSurvey runtime fixture' >&2
+    exit 1
+fi
+
+if compose exec -T nginx wget -qO /dev/null \
+    http://127.0.0.1/upload/surveys/987654321/files/fu_limesurvey-nginx-protection-smoke-2fb6bdb.txt; then
+    echo 'Nginx exposed a LimeSurvey response-upload fixture' >&2
     exit 1
 fi
 

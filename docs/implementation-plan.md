@@ -151,10 +151,10 @@ Approved spec and plan
 - [x] `sh -n docker/entrypoint.sh` and PHP syntax checks pass.
 
 **Current evidence:** GitHub Actions run
-[35342067109](https://github.com/cahangeorge/LimeSurvey/actions/runs/35342067109)
-passed on commit `2fb6bdb` using a native `aarch64` runner. It completed the
+[35373999986](https://github.com/cahangeorge/LimeSurvey/actions/runs/35373999986)
+passed on commit `4711f46` using a native `aarch64` runner. It completed the
 pinned image build, required PHP module checks, 10 tests/56 assertions, the
-Compose smoke test, and the secret scan.
+post-remediation Compose smoke test, and the tracked-secret scan.
 
 **Dependencies:** Task 3.
 
@@ -240,8 +240,8 @@ client/plugin implementation, with no bootstrap or fixture errors.
 - [x] `find plugins tests -name '*.php' -print0 | xargs -0 -n1 php -l`.
 - [x] Local LimeSurvey plugin list shows `ResendEmail` available.
 
-**Current evidence:** GitHub Actions run 35342067109 passed the no-network suite
-with 10 tests and 56 assertions. A disposable initialized LimeSurvey stack discovered
+**Current evidence:** GitHub Actions run 35373999986 passed the no-network suite
+on commit `4711f46` with 10 tests and 56 assertions. A disposable initialized LimeSurvey stack discovered
 `ResendEmail` through the upstream plugin manager, installed it, set it active, and loaded it
 successfully. Production activation remains an explicit post-install runbook step.
 
@@ -278,17 +278,21 @@ successfully. Production activation remains an explicit post-install runbook ste
 
 ### Checkpoint C: Repository release candidate
 
-**Status: HOLD.** Independent review found direct Nginx exposure of runtime and
-respondent-upload files plus a secret-scan exclusion. Local remediation is pending
-a successful CI re-run and independent re-review. No immutable wrapper release tag
-exists yet.
+**Status: RELEASE CANDIDATE VERIFIED; IMMUTABLE TAG REQUIRED.** Commit `4711f46`
+remediates the Nginx direct-access and tracked-secret scan findings. GitHub Actions
+run 35373999986 passed every ARM64 release-gate step on that exact revision, and
+independent re-review found no unresolved high or critical issue. The reserved
+wrapper tag is `v7.1.1-260914-omnestack.1`; Phase 4 remains blocked until the remote
+tag resolves to the verified revision.
 
-- [ ] Compose, PHP syntax, plugin unit tests, build, and local smoke checks pass after remediation.
+- [x] Compose, PHP syntax, plugin unit tests, build, and local smoke checks pass after remediation.
 - [x] No secrets are tracked or exposed in logs.
 - [x] Runbook is executable and rollback-safe.
-- [ ] Independent code review finds no unresolved high/critical issue.
-- [ ] A real immutable wrapper release tag exists.
-- [ ] Only then proceed to Coolify.
+- [x] Independent code review finds no unresolved high/critical issue.
+
+**Release condition:** Checkpoint C closes and Phase 4 may proceed only when the
+remote tag `v7.1.1-260914-omnestack.1` resolves to verified commit `4711f46`.
+Until then, no deployment is authorized; Formbricks remains unchanged.
 
 ### Phase 4: Parallel Coolify deployment and acceptance
 

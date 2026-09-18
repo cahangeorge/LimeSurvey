@@ -221,4 +221,3 @@ final class ResendClient
         }
     }
 }
-

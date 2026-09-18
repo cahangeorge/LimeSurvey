@@ -83,15 +83,15 @@ Approved spec and plan
 **Description:** Determine whether this Coolify Compose application exposes eligible database/storage backup controls. Prefer a database-aware `pg_dump` written outside application logs, archive relevant persistent files and non-secret configuration, copy the artifacts off the service host, and restore the dump into a disposable PostgreSQL instance for verification. If Coolify cannot securely export the artifacts, stop at the gate and request an approved S3-compatible destination or explicit server-access method.
 
 **Acceptance criteria:**
-- [ ] PostgreSQL dump and required file archive exist, are non-empty, and have recorded SHA-256 checksums.
-- [ ] At least one encrypted or access-controlled copy exists outside the service host.
-- [ ] A disposable restore succeeds and its schema/table/aggregate counts match the inventory.
-- [ ] Backup location and seven-day retention are documented without secrets.
+- [x] PostgreSQL dump and required file archive exist, are non-empty, and have recorded SHA-256 checksums.
+- [x] At least one encrypted or access-controlled copy exists outside the service host.
+- [x] A disposable restore succeeds and its schema/table/aggregate counts match the inventory.
+- [x] Backup location and seven-day retention are documented without secrets.
 
 **Verification:**
-- [ ] Run `sha256sum` on each artifact at source and destination and compare results.
-- [ ] Restore into a disposable database and run schema/table/count-only checks.
-- [ ] Destroy only the disposable restore environment after evidence is recorded.
+- [x] Run `sha256sum` on each artifact at source and destination and compare results.
+- [x] Restore into a disposable database and run schema/table/count-only checks.
+- [x] Destroy only the disposable restore environment after evidence is recorded.
 
 **Dependencies:** Task 1.
 
@@ -103,11 +103,11 @@ Approved spec and plan
 
 ### Checkpoint A: Formbricks safety gate
 
-- [ ] Inventory contains no sensitive response data.
-- [ ] Backup checksums match and restore proof passes.
-- [ ] An off-server copy is confirmed.
-- [ ] Formbricks remains running and unchanged.
-- [ ] If any item fails, production cutover remains blocked.
+- [x] Inventory contains no sensitive response data.
+- [x] Backup checksums match and restore proof passes.
+- [x] An off-server copy is confirmed.
+- [x] Formbricks remains running and unchanged.
+- [x] If any item fails, production cutover remains blocked.
 
 ### Phase 2: Deployment repository foundation
 
@@ -204,13 +204,16 @@ module check remain mandatory on the native Coolify host before deployment.
 **Description:** Add focused PHPUnit tests around the LimeSurvey email plugin adapter before implementation. Cover text/HTML payload mapping, sender/recipient/reply-to handling, missing API key, finite timeouts, non-2xx responses, transport exceptions, success signalling, and secret non-disclosure. Explicitly decide attachment behavior: either implement supported attachments or fail closed with a clear administrator error.
 
 **Acceptance criteria:**
-- [ ] Tests fail for the expected missing implementation rather than test setup errors.
-- [ ] Tests never perform a real network request or contain a real API key.
-- [ ] Error assertions prove that authorization values are absent from exceptions/log messages.
+- [x] Tests fail for the expected missing implementation rather than test setup errors.
+- [x] Tests never perform a real network request or contain a real API key.
+- [x] Error assertions prove that authorization values are absent from exceptions/log messages.
 
 **Verification:**
-- [ ] `composer install --no-interaction --no-progress`.
-- [ ] `vendor/bin/phpunit tests/ResendEmailPluginTest.php` produces the expected red result before Task 7.
+- [x] `composer install --no-interaction --no-progress`.
+- [x] `vendor/bin/phpunit tests/ResendEmailPluginTest.php` produces the expected red result before Task 7.
+
+**Current evidence:** The no-network suite first produced nine expected failures for the missing
+client/plugin implementation, with no bootstrap or fixture errors.
 
 **Dependencies:** Task 5.
 
@@ -227,14 +230,19 @@ module check remain mandatory on the native Coolify host before deployment.
 **Description:** Implement the smallest plugin that satisfies Task 6, subscribes to LimeSurvey's supported email dispatch event, sends through `https://api.resend.com/emails`, and reports delivery acceptance/failure back to LimeSurvey without leaking credentials.
 
 **Acceptance criteria:**
-- [ ] All Task 6 tests pass, including timeout/non-2xx and secret non-disclosure cases.
-- [ ] Plugin declares compatible LimeSurvey metadata and reads configuration from runtime environment.
-- [ ] Compose installs/enables the plugin without modifying upstream vendor source.
+- [x] All Task 6 tests pass, including timeout/non-2xx and secret non-disclosure cases.
+- [x] Plugin declares compatible LimeSurvey metadata and reads configuration from runtime environment.
+- [x] Compose installs/enables the plugin without modifying upstream vendor source.
 
 **Verification:**
-- [ ] `vendor/bin/phpunit tests/ResendEmailPluginTest.php`.
-- [ ] `find plugins tests -name '*.php' -print0 | xargs -0 -n1 php -l`.
-- [ ] Local LimeSurvey plugin list shows `ResendEmail` available.
+- [x] `vendor/bin/phpunit tests/ResendEmailPluginTest.php`.
+- [x] `find plugins tests -name '*.php' -print0 | xargs -0 -n1 php -l`.
+- [x] Local LimeSurvey plugin list shows `ResendEmail` available.
+
+**Current evidence:** PHPUnit passes with 9 tests and 51 assertions. A disposable initialized
+LimeSurvey stack discovered `ResendEmail` through the upstream plugin manager, installed it, set
+it active, and loaded it successfully. Production activation remains an explicit post-install
+runbook step.
 
 **Dependencies:** Task 6.
 
@@ -251,13 +259,13 @@ module check remain mandatory on the native Coolify host before deployment.
 **Description:** Complete the operator runbook with secret setup, first initialization, backup/restore, Resend validation, pinned upgrade procedure, rollback decision points, and commands that avoid logging sensitive data.
 
 **Acceptance criteria:**
-- [ ] A new operator can deploy and validate without inspecting chat history.
-- [ ] Restore and rollback procedures name prerequisites and irreversible boundaries.
-- [ ] No secret value, private response data, or unsafe dump-through-logs command is present.
+- [x] A new operator can deploy and validate without inspecting chat history.
+- [x] Restore and rollback procedures name prerequisites and irreversible boundaries.
+- [x] No secret value, private response data, or unsafe dump-through-logs command is present.
 
 **Verification:**
-- [ ] Execute all safe local commands from the runbook against the local stack.
-- [ ] Review every production command for output and rollback behavior.
+- [x] Execute all safe local commands from the runbook against the local stack.
+- [x] Review every production command for output and rollback behavior.
 
 **Dependencies:** Tasks 2 and 7.
 
@@ -270,8 +278,8 @@ module check remain mandatory on the native Coolify host before deployment.
 ### Checkpoint C: Repository release candidate
 
 - [ ] Compose, PHP syntax, plugin unit tests, build, and local smoke checks pass.
-- [ ] No secrets are tracked or exposed in logs.
-- [ ] Runbook is executable and rollback-safe.
+- [x] No secrets are tracked or exposed in logs.
+- [x] Runbook is executable and rollback-safe.
 - [ ] Independent code review finds no unresolved high/critical issue.
 - [ ] Only then proceed to Coolify.
 

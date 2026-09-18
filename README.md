@@ -4,7 +4,7 @@ Deployment wrapper for running [LimeSurvey Community Edition](https://github.com
 
 ## Status
 
-Repository foundation only. The production service has not been deployed and Formbricks remains online. See [`docs/implementation-plan.md`](docs/implementation-plan.md) for the gated rollout. Operational inventories and backup evidence are kept outside this public repository.
+The pinned local runtime and Resend plugin are implemented. The ARM64 release build and production service have not yet been validated, and Formbricks remains online. See [`docs/implementation-plan.md`](docs/implementation-plan.md) for the gated rollout. Operational inventories and backup evidence are kept outside this public repository.
 
 ## Pinned upstream
 
@@ -30,21 +30,19 @@ Nginx  -->  PHP 8.3 FPM / LimeSurvey  -->  MariaDB 11.4 LTS
 
 The final service will use `survey.omnestack.com`. The existing Formbricks service at `feedback.omnestack.com` remains independent until backup, deployment, migration, and cutover checkpoints pass.
 
-## Planned local verification
+## Local verification
 
-The following commands become executable as their referenced files are added in Tasks 4-7:
+The repository includes a no-network plugin unit test and a disposable Compose smoke test:
 
 ```bash
-docker compose config --quiet
-docker compose build --pull
-docker compose up -d
-docker compose ps
-
-find docker plugins tests -name '*.php' -print0 | xargs -0 -n1 php -l
 composer install --no-interaction --no-progress
 vendor/bin/phpunit tests/ResendEmailPluginTest.php
+docker compose --env-file .env.example config --quiet
+./tests/smoke.sh
 git diff --check
 ```
+
+The smoke test builds the pinned image, verifies service health and database persistence, confirms that the database port is private, checks Nginx deny rules, and confirms the packaged `ResendEmail` plugin metadata. It does not send email or use a real Resend key.
 
 Never place `.env`, database dumps, API keys, administrator credentials, exports, or survey responses in this repository.
 
@@ -52,6 +50,7 @@ Never place `.env`, database dumps, API keys, administrator credentials, exports
 
 - [`docs/spec.md`](docs/spec.md) — approved requirements and boundaries
 - [`docs/implementation-plan.md`](docs/implementation-plan.md) — ordered tasks and checkpoints
+- [`docs/runbook.md`](docs/runbook.md) — deployment, initialization, backup, restore, email validation, upgrade, and rollback
 
 Production resource identifiers, survey inventories, database evidence, and backup locations are intentionally not published.
 

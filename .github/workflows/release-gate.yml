@@ -104,10 +104,19 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          if git grep -IlE '(BEGIN (OPENSSH|RSA|EC) PRIVATE KEY|Bearer [A-Za-z0-9._-]{20,}|gh[opusr]_[A-Za-z0-9]{20,}|RESEND_API_KEY=.{8}|POSTGRES_PASSWORD=.{8})'; then
-            echo 'Credential-like tracked content found.' >&2
-            exit 1
-          fi
+          patterns=(
+            'BEGIN (OPENSSH|RSA|EC) PRIVATE '"KEY"
+            'Bearer ''[A-Za-z0-9._-]{20,}'
+            'gh''[opusr]_[A-Za-z0-9]{20,}'
+            'RESEND_API_''KEY=.{8}'
+            'POSTGRES_''PASSWORD=.{8}'
+          )
+          for pattern in "${patterns[@]}"; do
+            if git grep -IlE "$pattern"; then
+              echo 'Credential-like tracked content found.' >&2
+              exit 1
+            fi
+          done
 
       - name: Verify clean tracked state
         shell: bash

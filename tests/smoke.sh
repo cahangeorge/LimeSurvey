@@ -92,6 +92,9 @@ compose exec -T nginx wget -qO- http://127.0.0.1/healthz \
 
 compose exec -T nginx wget -qO /dev/null http://127.0.0.1/
 
+compose exec -T nginx wget -qO- http://127.0.0.1/editor/ \
+    | grep -Fq '<title>LimeSurvey - Editor</title>'
+
 compose exec -T app sh -eu -c '
     mkdir -p "$1" "$2"
     printf "%s\n" nginx-protection-smoke > "$3"

@@ -14,6 +14,9 @@ spec.loader.exec_module(gate)
 
 
 class DependencyGateTests(unittest.TestCase):
+    def test_intentional_negative_ci_canary(self):
+        self.fail("Intentional disposable CI negative probe; never merge")
+
     def setUp(self):
         self.now = datetime(2026, 10, 2, 18, tzinfo=timezone.utc)
         self.lock = {"packages": [], "packages-dev": [{"name": "vendor/test", "version": "v1.2.3"}]}

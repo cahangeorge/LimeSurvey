@@ -1,0 +1,30 @@
+title = "LimeSurvey secret rules"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "limesurvey-runtime-assignment"
+description = "Runtime credentials must not be stored in source, regardless of entropy"
+regex = '''(?i)\b(?:DB_PASSWORD|DB_ROOT_PASSWORD|POSTGRES_PASSWORD|RESEND_API_KEY)[\t ]*=[\t ]*([^\r\n]+)'''
+secretGroup = 1
+keywords = ["db_password", "db_root_password", "postgres_password", "resend_api_key"]
+
+[[rules.allowlists]]
+description = "Only the three exact public smoke-test placeholders"
+condition = "AND"
+paths = ['''^\.env\.example$''']
+regexTarget = "line"
+regexes = [
+  '''(?m)^DB_PASSWORD=example-only-not-a-secret$''',
+  '''(?m)^DB_ROOT_PASSWORD=example-root-only-not-a-secret$''',
+  '''(?m)^RESEND_API_KEY=example$''',
+]
+
+[[rules.allowlists]]
+description = "Historical credential-check regex source only; not a credential"
+condition = "AND"
+commits = ["435824a140801f43ff0f00ccd7c2cea7c666578f"]
+paths = ['''^\.github/workflows/release-gate\.yml$''']
+regexTarget = "line"
+regexes = ['''(?m)^          if git grep -IlE '\(BEGIN \(OPENSSH\|RSA\|EC\) PRIVATE KEY\|Bearer \[A-Za-z0-9\._-\]\{20,\}\|gh\[opusr\]_\[A-Za-z0-9\]\{20,\}\|RESEND_API_KEY=\.\{8\}\|POSTGRES_PASSWORD=\.\{8\}\)'; then$''']

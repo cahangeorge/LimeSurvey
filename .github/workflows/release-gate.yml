@@ -15,8 +15,107 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: Fast configuration and unit checks
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the tested revision without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Validate Compose, shell scripts and dependency gate behavior
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker compose --env-file .env.example config --quiet
+          sh -n docker/entrypoint.sh
+          sh -n tests/smoke.sh
+          sh -n scripts/ci/install-security-tools.sh
+          python3 -m unittest discover -s tests -p 'test_dependency_gate.py'
+
+      - name: Install locked test dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm \
+            -v "${PWD}:/app" -w /app \
+            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
+            sh -c 'composer validate --strict --no-check-publish && composer install --no-interaction --no-progress --prefer-dist'
+
+      - name: Run PHP lint and no-network Resend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker run --rm --network none \
+            -v "${PWD}:/app" -w /app \
+            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
+            sh -c 'find docker plugins tests -name "*.php" -print0 | xargs -0 -n1 php -l && vendor/bin/phpunit tests/ResendEmailPluginTest.php'
+
+      - name: Verify clean tracked state
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --check
+          test -z "$(git status --short --untracked-files=no)"
+
+  security:
+    name: Secrets, workflows and dependencies
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out complete tested history without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+
+      - name: Install verified security tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          sh scripts/ci/install-security-tools.sh "${RUNNER_TEMP}/security-tools"
+
+      - name: Scan Git history and current files without exposing secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/security-tools/gitleaks" git --config .gitleaks.toml --ignore-gitleaks-allow --redact --no-banner --log-level error --exit-code 1 .
+          "${RUNNER_TEMP}/security-tools/gitleaks" dir --config .gitleaks.toml --ignore-gitleaks-allow --redact --no-banner --log-level error --exit-code 1 .
+
+      - name: Validate and audit every workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/security-tools/actionlint" .github/workflows/*.yml
+          "${RUNNER_TEMP}/security-tools/zizmor" --offline --strict-collection .github/workflows/*.yml
+
+      - name: Scan all locked dependencies and require complete coverage
+        shell: bash
+        run: |
+          set -euo pipefail
+          "${RUNNER_TEMP}/security-tools/trivy" fs \
+            --cache-dir "${RUNNER_TEMP}/trivy-cache" --timeout 5m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check \
+            --scanners vuln --include-dev-deps --list-all-pkgs --ignorefile '' \
+            --format json --output "${RUNNER_TEMP}/trivy-dependencies.json" composer.lock
+          python3 scripts/ci/check-dependencies.py \
+            "${RUNNER_TEMP}/trivy-dependencies.json" composer.lock \
+            "${RUNNER_TEMP}/trivy-cache/db/metadata.json"
+
   arm64-release-gate:
     name: ARM64 build and runtime checks
+    needs: [quality, security]
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 45
 
@@ -35,34 +134,6 @@ jobs:
         run: |
           set -euo pipefail
           test "$(uname -m)" = aarch64
-
-      - name: Validate Compose and shell scripts
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker compose --env-file .env.example config --quiet
-          sh -n docker/entrypoint.sh
-          sh -n tests/smoke.sh
-
-      - name: Install test dependencies
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm \
-            -v "${PWD}:/app" \
-            -w /app \
-            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
-            composer install --no-interaction --no-progress --prefer-dist
-
-      - name: Run no-network Resend tests
-        shell: bash
-        run: |
-          set -euo pipefail
-          docker run --rm --network none \
-            -v "${PWD}:/app" \
-            -w /app \
-            composer:2.8.12@sha256:5248900ab8b5f7f880c2d62180e40960cd87f60149ec9a1abfd62ac72a02577c \
-            sh -c 'find docker plugins tests -name "*.php" -print0 | xargs -0 -n1 php -l && vendor/bin/phpunit tests/ResendEmailPluginTest.php'
 
       - name: Build the pinned LimeSurvey image natively
         shell: bash
@@ -100,38 +171,28 @@ jobs:
           set -euo pipefail
           ./tests/smoke.sh
 
-      - name: Reject credential-like tracked content
-        shell: bash
-        run: |
-          set -euo pipefail
-          patterns=(
-            'BEGIN (OPENSSH|RSA|EC) PRIVATE '"KEY"
-            'Bearer ''[A-Za-z0-9._-]{20,}'
-            'gh''[opusr]_[A-Za-z0-9]{20,}'
-            'RESEND_API_''KEY=.{8}'
-            'POSTGRES_''PASSWORD=.{8}'
-            'DB_''PASSWORD=.{8}'
-            'DB_ROOT_''PASSWORD=.{8}'
-          )
-          allowed=(
-            '.env.example:DB_''PASSWORD=example-only-not-a-secret'
-            '.env.example:DB_ROOT_''PASSWORD=example-root-only-not-a-secret'
-            '.env.example:RESEND_API_''KEY=example'
-          )
-          for pattern in "${patterns[@]}"; do
-            matches=$(git grep -E "$pattern" -- . || true)
-            for example in "${allowed[@]}"; do
-              matches=$(printf '%s\n' "$matches" | grep -Fvx "$example" || true)
-            done
-            if [ -n "$matches" ]; then
-              echo 'Credential-like tracked content found.' >&2
-              exit 1
-            fi
-          done
-
       - name: Verify clean tracked state
         shell: bash
         run: |
           set -euo pipefail
           git diff --check
           test -z "$(git status --short --untracked-files=no)"
+
+  mvp-gate:
+    name: MVP required gate
+    needs: [quality, security, arm64-release-gate]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 2
+    steps:
+      - name: Require every mandatory job to succeed
+        shell: bash
+        env:
+          QUALITY_RESULT: ${{ needs.quality.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          ARM64_RESULT: ${{ needs.arm64-release-gate.result }}
+        run: |
+          set -euo pipefail
+          test "$QUALITY_RESULT" = success
+          test "$SECURITY_RESULT" = success
+          test "$ARM64_RESULT" = success

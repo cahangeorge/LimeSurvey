@@ -49,3 +49,31 @@ Keep PR integration mandatory and direct pushes, force pushes and deletion block
 Negative source/security canaries and the hosted native ARM64 build remain required before Checkpoint A closes.
 
 References: [Gitleaks configuration](https://github.com/gitleaks/gitleaks#configuration), [zizmor usage](https://docs.zizmor.sh/usage/), [Trivy PHP coverage](https://trivy.dev/docs/latest/coverage/language/php/), [GitHub protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches).
+
+## Release artifact route
+
+`Release artifact` is a separate manual workflow, restricted to this repository's `main` ref. It verifies protected current main and the newest completed successful push run of `release-gate.yml` for the exact source SHA, both before building and immediately before publication. A PR event, arbitrary branch, stale source or unsuccessful CI cannot publish through this route. A manual dispatch is an operator action, not production approval.
+
+The native ARM64 job builds once with Buildx and tests the resulting local image using disposable Compose smoke. The Dockerfile separates checksum-verified upstream source preparation from runtime construction; upstream version/base digest and PHP modules remain pinned. The OCI revision is the wrapper commit; `io.omnestack.limesurvey.upstream-revision` retains the upstream commit. Source built during PR validation is distinct from a release candidate. Promotion must reuse the resulting registry digest.
+
+Only this trusted release job receives `packages: write`, plus `contents: read` and `actions: read` for its preflight. Registry login uses its ephemeral `GITHUB_TOKEN` in a temporary Docker configuration created after build/smoke; logout and deletion run on exit. No production/staging secret, persistent PAT, OIDC, credential creation or deployment operation is included. GHCR destination: `ghcr.io/cahangeorge/limesurvey`; tag `sha-<wrapper SHA>-run-<run ID>-<attempt>`. No `latest` tag. New GHCR packages default to private; package visibility and deployment read access are separate operator gates.
+
+Publishing stores a candidate, including one that later fails scanning. Publication alone never grants eligibility. The workflow obtains its final manifest digest, inspects raw registry bytes, pulls by that digest, and requires the config ID to equal the tested local image. The validator checks the manifest hash/config, `linux/arm64`, wrapper/upstream labels and identical scan/SBOM identities. Multi-platform indexes are rejected in this single-platform pilot.
+
+### Inventory and vulnerability acceptance
+
+Trivy 0.75.0 ARM64 archive SHA-256: `a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3`. The final registry digest is scanned using only the remote source, explicit vulnerability scanner, all packages, no implicit configuration/ignorefile, a fresh temporary DB/cache and finite timeout. JSON retains findings at every severity. The same report is converted to CycloneDX 1.7, with the vulnerability scanner explicitly enabled during conversion.
+
+Pinned upstream runtime uses Composer `installed.php` metadata; the vendor analyzer reads `installed.json`. Source preparation adds scanner JSON for concrete packages from every installed PHP inventory. It excludes the application root and declared virtual provided/replaced entries, validates physical package directories, and does not install/resolve/change library versions. Independently, the CI helper extracts package names/versions again from the built image's `installed.php`, plus all installed Debian packages via `dpkg-query`. The validator requires exact OS inventory and exact root/TwoFactor (and any other discovered Composer) inventory targets and versions in the final scan. Missing root libraries cannot be concealed by a nonempty plugin or OS report.
+
+Existing DB freshness and severity policy applies to every image result, including HIGH/CRITICAL without fixes and unknown severity. Unsupported/EOL OS, malformed evidence, missing packages/targets, tool errors or SBOM package omission produce HOLD and a failed run. There is no waiver/`ignore-unfixed` path. Raw vulnerability evidence may still be retained for triage when the gate fails; `release.json` is created only after successful validation.
+
+### Manifest and later gates
+
+The manifest binds source/config commit, image/digest/config ID/platform, upstream version/commit, verified source CI run/attempt, release run/attempt and SHA-256 hashes of the raw registry manifest, Docker inspect, installed inventory, scan, DB metadata and SBOM. Evidence is uploaded with a pinned `actions/upload-artifact` v4 commit for 30 days; longer operational retention must be established before relying on these reports for rollback/audit.
+
+`ARTIFACT_VERIFIED` means the image passed this inventory/CVE contract. Staging stays `PENDING`, production `HOLD`, configuration schema/migrations `REVIEW_REQUIRED` and previous promoted digest unset until those separate gates supply verified evidence. The manifest cannot authorize deployment. Coolify's existing source branch/autodeploy configuration is untouched.
+
+Coverage limits: OS/Composer inventory does not establish CVE coverage of the PHP interpreter compiled from source, LimeSurvey application code, or bundled non-Composer assets. Those require upstream release/security review in the upgrade/release gates; these gaps are recorded in the manifest. The PHP-FPM image is only the application artifact; pinned Nginx and MariaDB deployment services require their own scan/upgrade review before a full staging/production release.
+
+References: [GitHub Container registry](https://docs.github.com/en/packages/working-with-a-github-packages-registry/working-with-the-container-registry), [pinned Trivy vendor analyzer](https://github.com/aquasecurity/trivy/blob/v0.75.0/pkg/fanal/analyzer/language/php/composer/vendor.go), [Trivy report conversion](https://trivy.dev/docs/latest/references/configuration/cli/trivy_convert/), [Docker Buildx inspection](https://docs.docker.com/reference/cli/docker/buildx/imagetools/inspect/).

@@ -1,0 +1,128 @@
+name: Release artifact
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-artifact-main
+  cancel-in-progress: false
+
+jobs:
+  artifact:
+    name: Build, publish and verify ARM64 candidate
+    if: github.repository == 'cahangeorge/LimeSurvey' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+    env:
+      IMAGE: ghcr.io/cahangeorge/limesurvey
+
+    steps:
+      - name: Check out exact integrated source without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          mkdir -p "$RUNNER_TEMP/release-evidence"
+          printf 'EVIDENCE=%s/release-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'RELEASE_TAG=%s:sha-%s-run-%s-%s\n' "$IMAGE" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Require protected main and successful CI for exact source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/branches/main" > "$EVIDENCE/branch.json"
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-gate.yml/runs?event=push&head_sha=${GITHUB_SHA}&per_page=100" > "$EVIDENCE/runs.json"
+          python3 scripts/ci/release-artifact.py preflight "$EVIDENCE/branch.json" "$EVIDENCE/runs.json" "$GITHUB_SHA" "$GITHUB_REF" > "$EVIDENCE/ci.json"
+
+      - name: Build once on native ARM64 and independently extract installed inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker buildx build --pull --load --platform linux/arm64 \
+            --provenance=false --sbom=false --file docker/php/Dockerfile \
+            --build-arg "WRAPPER_COMMIT=$GITHUB_SHA" --tag "$RELEASE_TAG" .
+          docker image inspect --format '{{.Id}}' "$RELEASE_TAG" > "$RUNNER_TEMP/tested-image-id"
+          python3 scripts/ci/release-artifact.py inventory "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/inventory.json"
+
+      - name: Run disposable Compose runtime smoke on the built image
+        shell: bash
+        env:
+          COMPOSE_PROJECT_NAME: limesurvey-release-artifact
+          SMOKE_NO_BUILD: '1'
+        run: |
+          set -euo pipefail
+          APP_IMAGE="$RELEASE_TAG" ./tests/smoke.sh
+
+      - name: Install checksum-verified ARM64 image scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 \
+            --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
+            --output "$RUNNER_TEMP/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-ARM64.tar.gz
+          printf '%s  %s\n' a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3 "$RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" --no-same-owner --no-same-permissions trivy
+          chmod 755 "$RUNNER_TEMP/trivy"
+
+      - name: Recheck main before publishing any candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/branches/main" > "$EVIDENCE/branch.json"
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-gate.yml/runs?event=push&head_sha=${GITHUB_SHA}&per_page=100" > "$EVIDENCE/runs.json"
+          python3 scripts/ci/release-artifact.py preflight "$EVIDENCE/branch.json" "$EVIDENCE/runs.json" "$GITHUB_SHA" "$GITHUB_REF" > "$EVIDENCE/ci.json"
+
+      - name: Publish candidate and scan exact registry digest before creating manifest
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          export DOCKER_CONFIG="$RUNNER_TEMP/release-docker-auth"
+          mkdir -m 700 "$DOCKER_CONFIG"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf -- "$DOCKER_CONFIG"' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | timeout 90s docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          timeout 10m docker push "$RELEASE_TAG" | tee "$RUNNER_TEMP/push.log"
+          sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\).*$/\1/p' "$RUNNER_TEMP/push.log" > "$RUNNER_TEMP/final-digest"
+          test "$(wc -l < "$RUNNER_TEMP/final-digest")" = 1
+          digest=$(cat "$RUNNER_TEMP/final-digest")
+          ref="$IMAGE@$digest"
+          timeout 90s docker buildx imagetools inspect --raw "$ref" > "$EVIDENCE/registry-manifest.json"
+          timeout 5m docker pull --platform linux/arm64 "$ref"
+          test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$(cat "$RUNNER_TEMP/tested-image-id")"
+          docker image inspect "$ref" > "$EVIDENCE/image.json"
+          "$RUNNER_TEMP/trivy" image --image-src remote --platform linux/arm64 \
+            --cache-dir "$RUNNER_TEMP/release-trivy-cache" --timeout 8m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check --config '' \
+            --scanners vuln --list-all-pkgs --ignorefile '' \
+            --format json --output "$EVIDENCE/scan.json" "$ref"
+          cp "$RUNNER_TEMP/release-trivy-cache/db/metadata.json" "$EVIDENCE/db.json"
+          "$RUNNER_TEMP/trivy" convert --config '' --ignorefile '' --scanners vuln \
+            --format cyclonedx --output "$EVIDENCE/sbom.cdx.json" "$EVIDENCE/scan.json"
+          python3 scripts/ci/release-artifact.py manifest "$EVIDENCE" "$digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+
+      - name: Preserve bounded evidence including failed vulnerability scans
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-evidence/
+          if-no-files-found: error
+          retention-days: 30

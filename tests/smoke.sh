@@ -75,7 +75,16 @@ wait_for_health() {
 }
 
 compose config --quiet
-compose up -d --build
+case "${SMOKE_NO_BUILD:-0}" in
+    0) compose up -d --build ;;
+    1)
+        : "${APP_IMAGE:?SMOKE_NO_BUILD requires a prebuilt APP_IMAGE}"
+        docker image inspect "$APP_IMAGE" >/dev/null
+        compose pull db nginx
+        compose up -d --no-build --pull never
+        ;;
+    *) echo 'Unsupported SMOKE_NO_BUILD value' >&2; exit 1 ;;
+esac
 
 wait_for_health db 45
 wait_for_health app 45

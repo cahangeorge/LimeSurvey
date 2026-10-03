@@ -38,7 +38,7 @@ jobs:
           sh -n docker/entrypoint.sh
           sh -n tests/smoke.sh
           sh -n scripts/ci/install-security-tools.sh
-          python3 -m unittest discover -s tests -p 'test_dependency_gate.py'
+          python3 -m unittest discover -s tests -p 'test_*gate.py'
 
       - name: Install locked test dependencies
         shell: bash

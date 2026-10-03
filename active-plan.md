@@ -1,63 +1,30 @@
-# Active Plan: CI/security foundation
+# Active Plan: ARM64 release artifact
 
 ## Project and phase
 
-- Project: public LimeSurvey deployment wrapper, `cahangeorge/LimeSurvey`.
-- Phase: local CI/security candidate; publication and hosted canaries are the next gate.
-- Base: `main`, commit `ae0f999936bbccfa88c220072eb40af2e90bdbed`.
-- Writer: Codex leader; independent native Codex review is read-only.
-- Date: 2026-10-02.
-- Existing requirements and deployment gates remain in `docs/spec.md` and `docs/implementation-plan.md`.
+Public LimeSurvey wrapper, `cahangeorge/LimeSurvey`; bounded Lot3 candidate, 2026-10-03.
+Base: integrated main `f25836960b2086e8fdeff38cf48d9fb11bac1ae4`.
+Codex leader is sole writer; native architectural/source review is read-only.
+Existing source requirements and deployment gates remain in `docs/spec.md` and `docs/implementation-plan.md`.
 
-## Scope
+## Scope and order
 
-Implementation slice (five files):
+1. Artifact slice, four files: new `.github/workflows/release.yml`, `scripts/ci/release-artifact.py`, `tests/test_release_gate.py` and existing `docker/php/Dockerfile`.
+2. Verification integration slice, two files: `tests/smoke.sh` adds explicit use of a previously built image without rebuild, and `.github/workflows/release-gate.yml` runs the new behavioral probes in required CI. Inspection found existing smoke unconditionally rebuilt, so this adapter is necessary to test the exact artifact.
+3. Documentation slice: this plan and `docs/delivery/security-policy.md`.
 
-1. `.github/workflows/release-gate.yml`
-2. `.gitleaks.toml`
-3. `scripts/ci/install-security-tools.sh`
-4. `scripts/ci/check-dependencies.py`
-5. `tests/test_dependency_gate.py`
+Build a single native ARM64 candidate from verified main using multi-stage source preparation and pinned runtime inputs. Run disposable runtime smoke on that built image. A manual main-only workflow verifies successful required CI for its exact source SHA before registry access. GHCR uses only job-scoped `GITHUB_TOKEN`; no production secrets or OIDC permission. Use unique run tags and verify final digest/config/platform/source identity, scan that exact digest, convert the same complete report into CycloneDX, and create a manifest only after validation succeeds. Registry storage alone never grants staging or production eligibility.
 
-Documentation slice (two files): this plan and `docs/delivery/security-policy.md`.
-Operational evidence and GitHub setting proposals stay outside this public repository.
-The candidate starts from committed code and preserves unrelated changes in other worktrees.
+## Acceptance
 
-## Acceptance criteria
+- Branch/commit/CI mismatch or missing evidence fails closed before publication. PR events and non-main refs cannot run publication.
+- Final registry manifest hash/config matches the tested local image. Platform is linux/arm64. OCI revision records wrapper SHA; upstream source identity is recorded separately.
+- Trivy inventories Debian OS packages and every independently extracted installed upstream Composer package/version; missing targets/packages, malformed reports, stale DB, unsupported scan identity, unknown severity, HIGH/CRITICAL with or without fix block eligibility. No blanket waiver.
+- SBOM derives from that exact scan and proves package coverage; manifest hashes bind scan/SBOM/config/inventory to image and exact CI run. Staging, migrations, previous promoted digest and production remain explicit pending gates.
+- Behavioral negative probes, all required workflow linters, secret scans and independent review pass locally. Native hosted build, digest scan and GHCR publication remain external acceptance evidence until actually executed.
 
-- Hosted quality/security checks precede the existing native ARM64 build and Compose smoke job. The aggregate `MVP required gate` succeeds only when all three jobs succeed.
-- Secret/workflow scanners reject synthetic defects. Dependency scanning proves complete locked package/version coverage, including development dependencies, and blocks unsafe or incomplete reports according to the security policy.
-- Static checks, unit tests and independent review pass locally. Hosted positive/negative canaries and actual `main` enforcement are separate acceptance requirements; local validation cannot close them.
+## Verification and stop
 
-## Verification
+Use pinned security tools already verified in the foundation; verify ARM64 Trivy publisher checksum and artifact-upload action commit from official upstream. Run `python3 -m unittest discover -s tests -p 'test_*gate.py'`, actionlint, offline strict zizmor, Gitleaks history/current files, Compose validation and `git diff --check`. Record actual scan coverage using a read-only export of the existing local baseline; it is diagnostic evidence, never release evidence. Targeted build/runtime verification uses disposable isolated resources only.
 
-Install the pinned Linux AMD64 tools into a disposable directory:
-
-```sh
-sh scripts/ci/install-security-tools.sh /tmp/limesurvey-ci-tools
-git diff --check
-sh -n docker/entrypoint.sh
-sh -n tests/smoke.sh
-sh -n scripts/ci/install-security-tools.sh
-PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_dependency_gate.py'
-/tmp/limesurvey-ci-tools/actionlint .github/workflows/*.yml
-/tmp/limesurvey-ci-tools/zizmor --offline --strict-collection .github/workflows/*.yml
-/tmp/limesurvey-ci-tools/gitleaks git --config .gitleaks.toml --ignore-gitleaks-allow --redact --no-banner --log-level error .
-/tmp/limesurvey-ci-tools/gitleaks dir --config .gitleaks.toml --ignore-gitleaks-allow --redact --no-banner --log-level error .
-```
-
-The exact Composer, PHP, Compose, Trivy and ARM64 commands are in `release-gate.yml`.
-Trivy reads only `composer.lock` in this phase; it does not inventory the upstream runtime downloaded by the Dockerfile.
-The dependency validator's CLI takes the Trivy JSON report, `composer.lock`, and the downloaded DB's `db/metadata.json` in that order.
-
-Verify secret rules using disposable synthetic files: each protected variable with a non-placeholder value, quoted/export/comment variants, exact root examples, altered examples and examples at other paths. Only exact root examples may pass. Redact scanner output and remove only the test fixture directory.
-Verify the aggregate shell with success, failure, cancellation and skipped results; only all-success may pass.
-Keep commands, exit codes and reports in private operational evidence.
-
-## Stop condition
-
-The local candidate can be reviewed and published after independent acceptance.
-Commit/push/PR publication and GitHub protection changes require their explicit authority.
-Checkpoint A remains HOLD until hosted positive/negative probes and real required-check enforcement pass.
-Release artifact publication, staging, migrations, production and rollback proof remain later gates.
-This phase adds no release/deployment credentials or production authority to CI.
+Local implementation/review is authorized. Stop at the concrete reviewed commit/push/PR and GHCR publication gate if its new scoped authority is missing. No production/staging changes, credential configuration, database migration, private-data transfer or Coolify branch changes. Preserve all other worktrees and private operational evidence. Final local status must distinguish PASS, FAIL, UNKNOWN and HOLD.

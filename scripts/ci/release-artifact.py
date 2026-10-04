@@ -46,7 +46,7 @@ def preflight(branch, runs, sha, ref):
     return {key: run[key] for key in ("id", "run_attempt", "head_sha", "event", "path")}
 
 
-def pairs(packages, name_key, version_key, composer=False, debian=False):
+def pairs(packages, name_key, version_key, composer=False, debian=False, alpine=False):
     require(isinstance(packages, list) and bool(packages), "missing package inventory")
     found = set()
     for item in packages:
@@ -58,8 +58,48 @@ def pairs(packages, name_key, version_key, composer=False, debian=False):
             require(isinstance(epoch, int) and not isinstance(epoch, bool) and epoch >= 0
                     and isinstance(release, str), "invalid Debian package version")
             version = (str(epoch) + ":" if epoch else "") + version + ("-" + release if release else "")
+        if alpine:
+            require(item.get("Epoch", 0) == 0 and item.get("Release", "") == "",
+                    "APK version must include its exact release revision")
         found.add((name, version.removeprefix("v") if composer else version))
     return found
+
+
+def supported_os(family, version):
+    # Explicit allowlist, not all releases of a recognized package manager.
+    patterns = {"debian": r"12(?:\.[0-9]+)?", "alpine": r"3\.24(?:\.[0-9]+)?"}
+    require(isinstance(family, str) and family in patterns and isinstance(version, str)
+            and re.fullmatch(patterns[family], version), "unsupported runtime OS/release")
+
+
+def parse_os_release(raw):
+    fields = {}
+    for line in raw.splitlines():
+        key, separator, value = line.strip().partition("=")
+        if key not in ("ID", "VERSION_ID"):
+            continue
+        match = re.fullmatch(r'''(["']?)([A-Za-z0-9._-]+)\1''', value)
+        require(separator and key not in fields and match is not None, "invalid runtime OS identity")
+        fields[key] = match[2]
+    require("ID" in fields and "VERSION_ID" in fields, "missing runtime OS identity")
+    return fields["ID"], fields["VERSION_ID"]
+
+
+def parse_apk_inventory(raw):
+    packages, names = [], set()
+    for record in raw.strip("\n").split("\n\n"):
+        fields = {}
+        for line in record.splitlines():
+            if line[:2] not in ("P:", "V:"):
+                continue  # APK file/ACL/dependency fields can repeat.
+            key, value = line[0], line[2:]
+            require(key not in fields and re.fullmatch(r"[^\s]+", value), "invalid APK package identity")
+            fields[key] = value
+        require("P" in fields and "V" in fields and fields["P"] not in names,
+                "missing or duplicate APK package record")
+        names.add(fields["P"])
+        packages.append([fields["P"], fields["V"]])
+    return packages
 
 
 def check_db(db, now):
@@ -97,17 +137,23 @@ def validate_image(raw, digest, inspected, report, inventory, db, sbom, sha, now
     require(metadata.get("ImageID") == image_id and ref in metadata.get("RepoDigests", []), "scanned image mismatch")
     require(metadata.get("ImageConfig", {}).get("architecture") == "arm64"
             and metadata.get("ImageConfig", {}).get("os") == "linux", "scanned platform mismatch")
-    require(metadata.get("OS", {}).get("Family") == "debian"
-            and str(metadata.get("OS", {}).get("Name", "")).split(".")[0] == "12"
-            and metadata.get("OS", {}).get("Eosl", False) is False, "unsupported or EOL runtime OS")
+    family, version = inventory.get("os_family"), inventory.get("os_version")
+    supported_os(family, version)
+    scanned_os = metadata.get("OS", {})
+    supported_os(scanned_os.get("Family"), scanned_os.get("Name"))
+    require(scanned_os.get("Family") == family and scanned_os.get("Eosl", False) is False,
+            "runtime OS mismatch or EOL")
+    # Debian's OS release says 12; Trivy can identify a point release (12.x).
+    require(family == "debian" or scanned_os["Name"] == version, "runtime OS version mismatch")
     check_db(db, now)
 
     results = report.get("Results")
     require(isinstance(results, list) and bool(results), "missing final scan results")
-    os_results = [item for item in results if item.get("Class") == "os-pkgs" and item.get("Type") == "debian"]
-    require(len(os_results) == 1, "missing or ambiguous OS inventory")
+    os_results = [item for item in results if item.get("Class") == "os-pkgs"]
+    require(len(os_results) == 1 and os_results[0].get("Type") == family, "missing or ambiguous OS inventory")
     expected_os = pairs(inventory["os"], 0, 1)
-    require(pairs(os_results[0].get("Packages"), "Name", "Version", debian=True) == expected_os,
+    require(pairs(os_results[0].get("Packages"), "Name", "Version",
+                  debian=family == "debian", alpine=family == "alpine") == expected_os,
             "incomplete installed OS coverage")
     expected_php = inventory["composer"]
     require(isinstance(expected_php, dict) and ROOT_TARGET in expected_php and PLUGIN_TARGET in expected_php,
@@ -175,9 +221,21 @@ def extract_inventory(image):
     def run(entrypoint, *args):
         return subprocess.check_output(["docker", "run", "--rm", "--network", "none", "--entrypoint", entrypoint,
                                         image, *args], timeout=120, text=True)
-    rows = run("dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\t${Version}\n")
-    os_packages = [row.split("\t")[1:] for row in rows.splitlines() if row.startswith("ii ")]
-    return {"os": os_packages, "composer": json.loads(run("php", "-r", INVENTORY_PHP)),
+    family, version = parse_os_release(run("cat", "/etc/os-release"))
+    supported_os(family, version)
+    if family == "alpine":
+        os_packages = parse_apk_inventory(run("cat", "/lib/apk/db/installed"))
+    else:
+        rows = run("dpkg-query", "-W", "-f=${db:Status-Abbrev}\t${Package}\t${Version}\n")
+        os_packages = []
+        for row in rows.splitlines():
+            if row.startswith("ii "):
+                fields = row.split("\t")
+                require(len(fields) == 3, "invalid Debian package record")
+                os_packages.append(fields[1:])
+        pairs(os_packages, 0, 1)
+    return {"os_family": family, "os_version": version, "os": os_packages,
+            "composer": json.loads(run("php", "-r", INVENTORY_PHP)),
             "php_version": run("php", "-r", "echo PHP_VERSION;").strip()}
 
 

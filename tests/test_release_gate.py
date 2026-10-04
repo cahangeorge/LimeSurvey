@@ -10,6 +10,7 @@ import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 spec = importlib.util.spec_from_file_location(
     "release_gate", Path(__file__).parents[1] / "scripts/ci/release-artifact.py")
@@ -32,7 +33,8 @@ class ReleaseGateTests(unittest.TestCase):
                   "org.opencontainers.image.version": gate.VERSION}
         self.inspect = [{"Id": self.config, "Os": "linux", "Architecture": "arm64",
                          "RepoDigests": [self.ref], "Config": {"Labels": labels}}]
-        self.inventory = {"os": [["libc6", "1:2.36-9"]], "composer": {
+        self.inventory = {"os_family": "debian", "os_version": "12",
+                          "os": [["libc6", "1:2.36-9"]], "composer": {
             "var/www/html/vendor/composer/installed.json": [["vendor/runtime", "v1.2.3"]],
             gate.PLUGIN_TARGET: [["robthree/twofactorauth", "1.6.5"]]}}
         self.report = {"SchemaVersion": 2, "ArtifactName": self.ref, "ArtifactType": "container_image",
@@ -61,6 +63,24 @@ class ReleaseGateTests(unittest.TestCase):
 
     def test_complete_artifact_passes(self):
         self.assertEqual(self.check(), {"os_packages": 1, "composer_packages": 2})
+
+    def test_independent_os_identity_is_required(self):
+        for field in ("os_family", "os_version"):
+            with self.subTest(field=field):
+                self.setUp()
+                del self.inventory[field]
+                with self.assertRaises((gate.GateError, KeyError)):
+                    self.check()
+
+    def test_mixed_or_duplicate_os_results_block(self):
+        for family in ("debian", "alpine", "ubuntu"):
+            with self.subTest(family=family):
+                self.setUp()
+                extra = copy.deepcopy(self.report["Results"][0])
+                extra["Type"] = family
+                self.report["Results"].append(extra)
+                with self.assertRaises(gate.GateError):
+                    self.check()
 
     def test_digest_config_platform_or_source_substitution_blocks(self):
         for mutate in (
@@ -110,8 +130,8 @@ class ReleaseGateTests(unittest.TestCase):
         self.report["Results"][0]["Vulnerabilities"] = [{"Severity": "LOW"}, {"Severity": "MEDIUM"}]
         self.check()
 
-    def test_debian_epoch_release_and_sbom_ecosystem_are_bound(self):
-        self.report["Results"][0]["Packages"][0]["Epoch"] = 0
+    def test_os_epoch_and_sbom_ecosystem_are_bound(self):
+        self.report["Results"][0]["Packages"][0]["Epoch"] = 1 if self.inventory["os_family"] == "alpine" else 0
         with self.assertRaises(gate.GateError):
             self.check()
         self.setUp()
@@ -201,6 +221,89 @@ class ReleaseGateTests(unittest.TestCase):
             self.assertEqual(manifest["production"]["status"], "HOLD")
             self.assertEqual(manifest["migrations"]["status"], "REVIEW_REQUIRED")
             self.assertIn("sbom.cdx.json", manifest["evidence_sha256"])
+
+
+class AlpineReleaseGateTests(ReleaseGateTests):
+    """Run every existing identity/coverage/severity/CLI gate against Alpine too."""
+
+    def setUp(self):
+        super().setUp()
+        self.inventory.update(os_family="alpine", os_version="3.24.2", os=[["musl", "1.2.6-r2"]])
+        self.report["Metadata"]["OS"] = {"Family": "alpine", "Name": "3.24.2"}
+        package = {"Name": "musl", "Version": "1.2.6-r2",
+                   "Identifier": {"PURL": "pkg:apk/alpine/musl@1.2.6-r2?arch=aarch64&distro=3.24.2"}}
+        self.report["Results"][0].update(Target="image (alpine 3.24.2)", Type="alpine", Packages=[package])
+        self.sbom["components"][0] = {"name": "musl", "version": "1.2.6-r2", "purl": package["Identifier"]["PURL"]}
+
+    def test_os_family_version_and_support_mismatches_block(self):
+        for document, field, value in (
+            ("inventory", "os_family", "debian"), ("inventory", "os_version", "3.23.4"),
+            ("scan", "Family", "debian"), ("scan", "Name", "3.23.4"),
+            ("scan", "Name", "3.24.1"), ("scan", "Name", "3.240.2"),
+            ("scan", "Eosl", True), ("scan", "Name", "edge"),
+        ):
+            with self.subTest(document=document, field=field, value=value):
+                self.setUp()
+                target = self.inventory if document == "inventory" else self.report["Metadata"]["OS"]
+                target[field] = value
+                with self.assertRaises(gate.GateError):
+                    self.check()
+
+    def test_apk_release_revision_is_exact_and_not_debian_reconstructed(self):
+        for replacement in ({"Version": "1.2.6-r1"}, {"Version": "1.2.6", "Release": "r2"},
+                            {"Epoch": 1}, {"Release": "r2"}):
+            with self.subTest(replacement=replacement):
+                self.setUp()
+                self.report["Results"][0]["Packages"][0].update(replacement)
+                with self.assertRaises(gate.GateError):
+                    self.check()
+
+
+class InstalledInventoryTests(unittest.TestCase):
+    def test_apk_records_preserve_revisions_and_virtual_packages(self):
+        raw = "P:musl\nV:1.2.6-r2\nF:lib\nR:libc.so\nR:ld.so\n\nP:.extension-rundeps\nV:20261003.103515\nD:so:libc.so\n"
+        self.assertEqual(gate.parse_apk_inventory(raw), [["musl", "1.2.6-r2"], [".extension-rundeps", "20261003.103515"]])
+
+    def test_missing_malformed_or_duplicate_apk_records_fail_closed(self):
+        for raw in ("", "P:musl\n", "V:1.2-r1\n", "P:musl\nV:\n", "P:musl\nV:1 2\n", "P:musl\nV:1-r0 ",
+                    "P:musl\nP:other\nV:1-r0\n", "P:musl\nV:1-r0\nV:2-r0\n",
+                    "P:musl\nV:1-r0\n\nP:musl\nV:1-r0\n", "P:musl\nV:1-r0\n\nP:bad\n"):
+            with self.subTest(raw=raw), self.assertRaises(gate.GateError):
+                gate.parse_apk_inventory(raw)
+
+    def test_os_release_is_parsed_as_data_not_executed(self):
+        self.assertEqual(gate.parse_os_release('NAME="Alpine Linux"\nID=alpine\nVERSION_ID=3.24.2\n'), ("alpine", "3.24.2"))
+        self.assertEqual(gate.parse_os_release("ID='debian'\nVERSION_ID=\"12\"\n"), ("debian", "12"))
+        for raw in ("ID=alpine\n", "VERSION_ID=3.24.2\n", "ID=alpine\nID=debian\nVERSION_ID=3.24.2\n",
+                    'ID=alpine\nVERSION_ID="$(touch /tmp/invalid)"\n', 'ID=alpine\nVERSION_ID="3.24.2\n'):
+            with self.subTest(raw=raw), self.assertRaises(gate.GateError):
+                gate.parse_os_release(raw)
+
+    def test_only_explicit_supported_runtime_releases_are_allowed(self):
+        for family, version in (("alpine", "edge"), ("alpine", "3.23.4"), ("alpine", "3.240"),
+                                ("debian", "13"), ("ubuntu", "24.04")):
+            with self.subTest(family=family, version=version), self.assertRaises(gate.GateError):
+                gate.supported_os(family, version)
+
+    def test_extraction_uses_tested_image_and_fails_without_os_fallback(self):
+        image = "sha256:" + "b" * 64
+        for family, version, database in (("alpine", "3.24.2", "P:musl\nV:1.2.6-r2\n"),
+                                         ("debian", "12", "ii \tlibc6\t1:2.36-9\n")):
+            def read(command, **kwargs):
+                self.assertIn("--network", command)
+                self.assertIn("none", command)
+                self.assertEqual(command[command.index("--entrypoint") + 2], image)
+                if command[-1] == "/etc/os-release": return f'ID={family}\nVERSION_ID="{version}"\n'
+                if command[-1] == "/lib/apk/db/installed" or "dpkg-query" in command: return database
+                if command[-1] == "echo PHP_VERSION;": return "8.3.35"
+                return json.dumps({gate.ROOT_TARGET: [["vendor/runtime", "1.2.3"]]})
+            with self.subTest(family=family), patch.object(gate.subprocess, "check_output", side_effect=read):
+                result = gate.extract_inventory(image)
+                self.assertEqual((result["os_family"], result["os_version"]), (family, version))
+                self.assertEqual(len(result["os"]), 1)
+        with patch.object(gate.subprocess, "check_output", side_effect=subprocess.CalledProcessError(1, "cat")) as reader:
+            with self.assertRaises(subprocess.CalledProcessError): gate.extract_inventory(image)
+            self.assertEqual(reader.call_count, 1)
 
 
 if __name__ == "__main__":

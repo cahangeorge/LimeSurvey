@@ -1,4 +1,4 @@
-FROM php:8.3.33-fpm-bookworm@sha256:1547a7b6fc3509870fc732f73aebeee62e73af3365858b075d4aad78e983920f AS source
+FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS source
 
 ARG LIMESURVEY_COMMIT=6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9
 ARG LIMESURVEY_ARCHIVE_SHA256=0cc0378756d14c2c8f9634b4f352fe490d167695b24673e38b1b4f321d359bc5
@@ -11,7 +11,8 @@ RUN set -eux; \
         --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
         "https://github.com/LimeSurvey/LimeSurvey/archive/${LIMESURVEY_COMMIT}.tar.gz" \
         --output "${archive}"; \
-    echo "${LIMESURVEY_ARCHIVE_SHA256}  ${archive}" | sha256sum --check --strict; \
+    archive_sha256="$(sha256sum "${archive}")"; \
+    test "${archive_sha256%% *}" = "${LIMESURVEY_ARCHIVE_SHA256}"; \
     tar --extract --gzip --file "${archive}" --strip-components=1 --no-same-owner; \
     rm -f "${archive}"; \
     install -d -o www-data -g www-data application/config upload tmp plugins themes; \
@@ -60,7 +61,7 @@ if ($count < 2) {
 }
 PHP
 
-FROM php:8.3.33-fpm-bookworm@sha256:1547a7b6fc3509870fc732f73aebeee62e73af3365858b075d4aad78e983920f AS runtime
+FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS runtime
 
 ARG LIMESURVEY_COMMIT=6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9
 ARG LIMESURVEY_ARCHIVE_SHA256=0cc0378756d14c2c8f9634b4f352fe490d167695b24673e38b1b4f321d359bc5
@@ -74,77 +75,27 @@ LABEL org.opencontainers.image.title="LimeSurvey for Coolify" \
       io.omnestack.limesurvey.upstream-revision="${LIMESURVEY_COMMIT}" \
       org.opencontainers.image.licenses="GPL-2.0-or-later"
 
+# Kerberos/GSSAPI is outside this Resend-based MVP; Alpine c-client provides SSL.
 RUN set -eux; \
-    saved_apt_mark="$(apt-mark showmanual)"; \
-    apt-get update; \
-    apt-get install -y --no-install-recommends \
-        ca-certificates \
-        curl \
-        libc-client2007e \
-        libcurl4 \
-        libfreetype6 \
-        libicu72 \
-        libjpeg62-turbo \
-        libkrb5-3 \
-        libldap-2.5-0 \
-        libonig5 \
-        libpng16-16 \
-        libxml2 \
-        libzip4 \
-        libcurl4-openssl-dev \
-        libfreetype6-dev \
-        libicu-dev \
-        libjpeg62-turbo-dev \
-        libkrb5-dev \
-        libldap2-dev \
-        libonig-dev \
-        libpng-dev \
-        libxml2-dev \
-        libzip-dev \
-        libc-client2007e-dev \
-        $PHPIZE_DEPS; \
+    apk upgrade --no-cache; \
+    apk add --no-cache ca-certificates curl c-client freetype libjpeg-turbo libpng \
+        icu-libs icu-data-full oniguruma libldap libxml2 libzip libintl; \
+    apk add --no-cache --virtual .build-deps $PHPIZE_DEPS pax-utils \
+        curl-dev freetype-dev libjpeg-turbo-dev libpng-dev zlib-dev icu-dev \
+        oniguruma-dev openldap-dev libxml2-dev libzip-dev gettext-dev \
+        imap-dev openssl-dev; \
     docker-php-ext-configure gd --with-freetype --with-jpeg; \
-    docker-php-ext-configure imap --with-kerberos --with-imap-ssl; \
-    docker-php-ext-configure ldap --with-libdir="lib/$(dpkg-architecture --query DEB_BUILD_MULTIARCH)"; \
-    docker-php-ext-install -j"$(nproc)" \
-        bcmath \
-        curl \
-        exif \
-        gd \
-        gettext \
-        imap \
-        intl \
-        ldap \
-        mbstring \
-        mysqli \
-        opcache \
-        pdo_mysql \
-        soap \
-        zip; \
-    apt-mark auto '.*' > /dev/null; \
-    apt-mark manual ${saved_apt_mark} \
-        ca-certificates \
-        curl \
-        libc-client2007e \
-        libcurl4 \
-        libfreetype6 \
-        libicu72 \
-        libjpeg62-turbo \
-        libkrb5-3 \
-        libldap-2.5-0 \
-        libonig5 \
-        libpng16-16 \
-        libxml2 \
-        libzip4; \
-    find /usr/local/lib/php/extensions -type f -name '*.so' -exec ldd '{}' ';' \
-        | awk '/=>/ { print $(NF - 1) }' \
-        | sort -u \
-        | xargs -r dpkg-query --search \
-        | cut -d: -f1 \
-        | sort -u \
-        | xargs -r apt-mark manual; \
-    apt-get purge -y --auto-remove -o APT::AutoRemove::RecommendsImportant=false; \
-    rm -rf /var/lib/apt/lists/*; \
+    docker-php-ext-configure imap --with-imap-ssl; \
+    docker-php-ext-configure ldap; \
+    docker-php-ext-install -j"$(nproc)" bcmath curl exif gd gettext imap intl ldap \
+        mbstring mysqli opcache pdo_mysql soap zip; \
+    run_deps="$(scanelf --needed --nobanner --format '%n#p' --recursive \
+        /usr/local/bin/php /usr/local/sbin/php-fpm /usr/local/lib/php/extensions \
+        | tr ',' '\n' | sort -u \
+        | awk 'system("[ -e /usr/local/lib/" $1 " ]") == 0 { next } { print "so:" $1 }')"; \
+    apk add --no-cache --virtual .extension-rundeps $run_deps; \
+    apk del --no-cache .build-deps; \
+    php-fpm -t; \
     php -r 'foreach (["bcmath", "curl", "exif", "gd", "gettext", "imap", "intl", "ldap", "mbstring", "mysqli", "Zend OPcache", "pdo_mysql", "soap", "zip"] as $extension) { if (!extension_loaded($extension)) { fwrite(STDERR, "Missing PHP extension: {$extension}\n"); exit(1); } }'
 
 WORKDIR /var/www/html

@@ -37,6 +37,7 @@ jobs:
           docker compose --env-file .env.example config --quiet
           sh -n docker/entrypoint.sh
           sh -n tests/smoke.sh
+          sh -n tests/nginx-security-smoke.sh
           sh -n scripts/ci/install-security-tools.sh
           python3 -m unittest discover -s tests -p 'test_*gate.py'
 
@@ -170,6 +171,90 @@ jobs:
         run: |
           set -euo pipefail
           ./tests/smoke.sh
+
+      - name: Build and scan the corrected Nginx companion natively
+        shell: bash
+        run: |
+          set -euo pipefail
+          evidence="$RUNNER_TEMP/nginx-evidence"
+          mkdir -p "$evidence" "$RUNNER_TEMP/nginx-tools"
+          docker build --pull --file docker/nginx/Dockerfile \
+            --tag limesurvey-nginx:arm64-canary docker/nginx
+          image_id=$(docker image inspect limesurvey-nginx:arm64-canary --format '{{.Id}}')
+          printf '%s\n' "$image_id" > "$evidence/image-id.txt"
+          docker image inspect "$image_id" > "$evidence/image.json"
+          docker run --rm --read-only --network none --entrypoint cat \
+            "$image_id" /lib/apk/db/installed > "$evidence/installed-apk.txt"
+          docker save "$image_id" > "$RUNNER_TEMP/nginx-image.tar"
+          curl --fail --silent --show-error --location --retry 2 \
+            --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
+            --output "$RUNNER_TEMP/nginx-tools/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-ARM64.tar.gz
+          printf '%s  %s\n' a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3 \
+            "$RUNNER_TEMP/nginx-tools/trivy.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/nginx-tools/trivy.tar.gz" \
+            --directory "$RUNNER_TEMP/nginx-tools" --no-same-owner --no-same-permissions trivy
+          "$RUNNER_TEMP/nginx-tools/trivy" image --input "$RUNNER_TEMP/nginx-image.tar" \
+            --cache-dir "$RUNNER_TEMP/nginx-cache" --timeout 8m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check --config '' \
+            --scanners vuln --list-all-pkgs --ignorefile '' \
+            --format json --output "$evidence/scan.json"
+          cp "$RUNNER_TEMP/nginx-cache/db/metadata.json" "$evidence/db.json"
+          python3 -I - "$evidence" "$image_id" <<'PY'
+          import datetime,json,pathlib,sys
+          p=pathlib.Path(sys.argv[1]); image_id=sys.argv[2]
+          inspect=json.loads((p/'image.json').read_text())
+          assert len(inspect)==1 and inspect[0]['Id']==image_id
+          assert inspect[0]['Architecture']=='arm64' and inspect[0]['Os']=='linux'
+          scan=json.loads((p/'scan.json').read_text()); metadata=scan['Metadata']
+          assert metadata['ImageID']==image_id and metadata['ImageConfig']['architecture']=='arm64'
+          assert metadata['OS']['Family']=='alpine' and metadata['OS']['Name']=='3.24.2'
+          assert not metadata['OS'].get('EOSL',False)
+          installed={}
+          for record in (p/'installed-apk.txt').read_text().strip().split('\n\n'):
+              names=[s[2:] for s in record.splitlines() if s.startswith('P:')]
+              versions=[s[2:] for s in record.splitlines() if s.startswith('V:')]
+              assert len(names)==len(versions)==1 and names[0] and versions[0]
+              assert names[0] not in installed
+              installed[names[0]]=versions[0]
+          results=scan['Results']
+          assert len(results)==1 and results[0]['Class']=='os-pkgs' and results[0]['Type']=='alpine'
+          reported={}
+          for package in results[0]['Packages']:
+              assert package['Name'] not in reported
+              reported[package['Name']]=package['Version']
+          assert installed and reported==installed
+          for name,version in {'libexpat':'2.8.5-r0','libpng':'1.6.59-r0','pcre2':'10.49-r0'}.items():
+              assert installed[name]==version
+          db=json.loads((p/'db.json').read_text()); now=datetime.datetime.now(datetime.timezone.utc)
+          assert db['Version']==2
+          for field,hours in [('UpdatedAt',48),('DownloadedAt',24)]:
+              stamp=datetime.datetime.fromisoformat(db[field].replace('Z','+00:00'))
+              assert stamp.tzinfo is not None
+              assert -300 <= (now-stamp).total_seconds() <= hours*3600
+          findings=results[0].get('Vulnerabilities',[])
+          assert all(v['Severity'] in {'LOW','MEDIUM','HIGH','CRITICAL','UNKNOWN'} for v in findings)
+          assert not [v for v in findings if v['Severity'] in {'HIGH','CRITICAL','UNKNOWN'}]
+          (p/'acceptance.json').write_text(json.dumps({'image_id':image_id,'platform':'linux/arm64','apk_count':len(installed),'gate':'PASS_NATIVE_SCAN'},indent=2)+'\n')
+          PY
+
+      - name: Verify corrected Nginx HTTP and FastCGI behavior on ARM64
+        shell: bash
+        run: |
+          set -euo pipefail
+          NGINX_IMAGE=$(docker image inspect limesurvey-nginx:arm64-canary --format '{{.Id}}')
+          FPM_IMAGE=$(docker image inspect limesurvey-app:arm64-release --format '{{.Id}}')
+          export NGINX_IMAGE FPM_IMAGE
+          ./tests/nginx-security-smoke.sh | tee "$RUNNER_TEMP/nginx-evidence/smoke.log"
+
+      - name: Preserve bounded Nginx canary evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: nginx-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/nginx-evidence/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Verify clean tracked state
         shell: bash

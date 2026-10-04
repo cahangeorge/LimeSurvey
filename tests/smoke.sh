@@ -90,6 +90,26 @@ wait_for_health db 45
 wait_for_health app 45
 wait_for_health nginx 45
 
+compose exec -T app sh -eu -c '
+    for tool in cc gcc g++ make autoconf dpkg-buildpackage pkg-config re2c; do
+        if command -v "$tool" >/dev/null 2>&1; then
+            echo "Build tool must not remain in runtime: $tool" >&2
+            exit 1
+        fi
+    done
+    command -v apk >/dev/null
+    installed_packages=$(apk info)
+    for package in linux-headers musl-dev libc-dev .build-deps .phpize-deps; do
+        if printf "%s\n" "$installed_packages" | grep -Fxq "$package"; then
+            echo "Development package must not remain in runtime: $package" >&2
+            exit 1
+        fi
+    done
+    php --version >/dev/null
+    php --ri imap | grep -qx "SSL Support => enabled"
+    php-fpm -t
+'
+
 db_container=$(container_for_service db)
 if docker port "$db_container" 3306/tcp 2>/dev/null | grep -q .; then
     echo 'Database port must not be published on the host' >&2

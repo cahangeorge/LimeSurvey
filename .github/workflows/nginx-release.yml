@@ -74,8 +74,9 @@ jobs:
           timeout 5m docker pull --platform linux/arm64 "$FPM_REF"
           docker image inspect "$FPM_REF" > "$EVIDENCE/fpm-image.json"
           python3 scripts/ci/nginx-release.py fpm "$EVIDENCE" > "$EVIDENCE/fpm.json"
-          export NGINX_IMAGE=$(cat "$RUNNER_TEMP/tested-image-id")
-          export FPM_IMAGE=$(docker image inspect --format '{{.Id}}' "$FPM_REF")
+          NGINX_IMAGE=$(cat "$RUNNER_TEMP/tested-image-id")
+          FPM_IMAGE=$(docker image inspect --format '{{.Id}}' "$FPM_REF")
+          export NGINX_IMAGE FPM_IMAGE
           timeout 5m ./tests/nginx-security-smoke.sh | tee "$EVIDENCE/smoke.log"
           python3 - <<'PYTHON'
           import json, os

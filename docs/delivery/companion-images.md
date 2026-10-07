@@ -35,10 +35,65 @@ findings remain visible. The proxy test uses the FPM image already built by that
 job. Native evidence is preserved for30days; no registry-write/deployment
 permission is introduced. AMD64 canary results do not satisfy this ARM64 gate.
 
-Neither Compose nor the release publication route consumes this new companion
-yet. Integration/publication must bind a tested native image to its final
-registry digest before staging can use it. Existing production stays at its
-current configuration until separately authorized.
+The separate manual `.github/workflows/nginx-release.yml` route targets
+`ghcr.io/cahangeorge/limesurvey-nginx`. Only a trusted repository/main dispatch
+on native ARM64 can run it. It checks protected main and the newest successful
+exact-source `release-gate.yml` push CI before building and immediately before
+publication. Nginx is built once from `docker/nginx/Dockerfile`; source, revision,
+component and version labels are added by the build command. The existing PHP
+release workflow remains PHP-only.
+
+The proxy smoke pulls only the approved FPM reference
+`ghcr.io/cahangeorge/limesurvey@sha256:4193d1c9bef626c675381fe2bad07b400bcf5cce56e373c221babae2ce9d3510`.
+Its raw manifest hash, config
+`sha256:ecad9df832a2f9e20585922ece061d2527f117a9436c8271ca27efe33c1fb4da`,
+ARM64 platform and source `58de3e047274976775a726fe4b21d879ba7a7844`
+are validated before smoke. That artifact was accepted by release run
+37186347292/attempt1; this route does not rebuild or republish PHP.
+
+`scripts/ci/nginx-release.py` reuses the existing pure CI preflight, APK parsing
+and DB freshness helpers, with separate Nginx-specific identity validation. The
+candidate's independent installed APK inventory must match its complete exported
+image scan, including the three exact patched versions. Trivy0.75.0 is pinned by
+its ARM64 archive checksum. DBv2 must be updated within48hours and downloaded
+within24hours, with at most5minutes of future clock skew. Alpine3.24.2 and no EOL
+flag are required. HIGH, CRITICAL, UNKNOWN and malformed severities block
+publication; LOW/MEDIUM remain in retained findings. No ignore/config file,
+ignore-unfixed or severity suppression is used.
+
+Only after the candidate scan passes does the workflow authenticate in an owned
+ephemeral Docker configuration and push. It retains that authentication for
+private-package verification and removes it on exit. It re-pulls the registry
+digest and checks exact tested config parity, raw manifest hash/config,
+platform/provenance and complete package/version coverage in the final scan.
+CycloneDX1.7 is converted from that same final JSON and must bind the same image
+and cover every scanned APK with a unique library component whose name, full
+version, PURL and bom-ref agree. APK PURLs require matching decoded package
+identity and exactly arch=aarch64/distro=3.24.2 qualifiers. The scan target must
+match its artifact reference followed by `(alpine 3.24.2)`. Evidence is uploaded for30days even on
+failure; tokens, auth configuration and exported image archives are excluded.
+
+The final `release.json` binds source/run/attempt, both tested local config IDs,
+FPM reference, source CI, smoke, inventory, raw manifest, scans, DB and SBOM
+checksums. Registry manifest digest and image config digest are separate fields.
+For a syntactically valid `manifest` invocation, the validator removes a
+previous final manifest before validating a reused directory. Argument-parser
+errors do not enter evidence validation; the workflow uses a clean owned directory. It creates `COMPANION_ARTIFACT_VERIFIED` only after every check passes,
+with staging `PENDING` and production `HOLD`.
+
+Local offline verification:
+
+```sh
+python3 -m unittest discover -s tests -p 'test_*gate.py'
+python3 scripts/ci/nginx-release.py --help
+```
+
+Publication execution and a native registry artifact remain unverified until
+separately authorized source integration and the first manual dispatch. Compose
+still does not consume this companion. Staging needs a separately reviewed
+configuration using exact PHP/Nginx digests, MariaDB resolution, and deployment
+approval. The proxy smoke does not initialize a database or prove LimeSurvey,
+backup/recovery, migrations or production acceptance.
 
 MariaDB/gosu findings require exact binary, toolchain, platform and CVE database
 coverage for reachability analysis. Keep raw scanner results and distinguish

@@ -103,7 +103,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout 5m docker image save --output "$RUNNER_TEMP/nginx-candidate.tar" "$RELEASE_TAG"
+          timeout 5m docker image save --output "$RUNNER_TEMP/nginx-candidate.tar" "$(cat "$RUNNER_TEMP/tested-image-id")"
           "$RUNNER_TEMP/trivy" image --input "$RUNNER_TEMP/nginx-candidate.tar" \
             --cache-dir "$RUNNER_TEMP/release-trivy-cache" --timeout 8m --no-progress \
             --disable-telemetry --offline-scan --skip-version-check --config '' \

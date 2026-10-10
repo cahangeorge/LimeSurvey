@@ -64,14 +64,17 @@ class MariaDBTests(unittest.TestCase):
     def test_regression_never_accepts_healthy_temporary_server_with_shell_pid1(self):
         def fake_run(args, timeout=120):
             if 'gosu' in args:
-                command = args[args.index('gosu') + 2:]
+                command = args[args.index('gosu') + 3:]
                 if 'missing-gosu-user' in args: raise subprocess.CalledProcessError(1, args)
                 if 'exit 37' in args: raise subprocess.CalledProcessError(37, args)
-                if command[:1] == ['id']: return '999\n'
+                if command[:1] == ['id']: return '998\n' if '-G' in command else '999\n'
                 if 'printf %s "$HOME"' in args: return '/nonexistent'
                 if 'test "$$" = 1 && printf exec' in args: return 'exec'
-            if 'getent' in args: return 'mysql:x:999:999::/nonexistent:/bin/false'
-            if 'id' in args: return '999\n'
+            if 'getent' in args: return 'mysql:x:999:998::/nonexistent:/bin/false'
+            if 'id' in args: return '998\n' if '-g' in args else '999\n'
+            if any(path in args for path in ('/proc/1/comm', '/proc/1/exe', '/proc/1/status')):
+                self.assertIn('--user', args)
+                self.assertEqual(args[args.index('--user') + 1], '999:998')
             if '/proc/1/comm' in args: return 'bash\n'
             if '/proc/1/exe' in args: return '/usr/bin/bash\n'
             if '/proc/1/status' in args: return 'Uid: 999 999 999 999\n'
@@ -226,7 +229,7 @@ class MariaDBTests(unittest.TestCase):
             calls = []
             def fake_run(args, timeout=120):
                 calls.append(args)
-                if 'id' in args: return '999\n'
+                if 'id' in args: return '998\n' if '-g' in args else '999\n'
                 if 'mysql' in args and 'gosu' in args: raise OSError('synthetic failure')
                 if args[1:3] == ['rm', '-f']: raise OSError('synthetic cleanup failure')
                 return ''

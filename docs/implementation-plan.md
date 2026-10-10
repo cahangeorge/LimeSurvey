@@ -666,3 +666,44 @@ one serialized migration; capture its DSN/SQL-bearing output privately. Verify
 actual columns/indexes and behavior beyond the schema version. Unknown backwards
 compatibility requires paired pre-change DB/files recovery, not an app-only
 rollback. No existing database migration or deployment occurs in this source phase.
+
+## Reviewed operational CI/CD MVP phase — 2026-10-11
+
+The independently reviewed prospective eight-file union is activated after the
+security phase accepted source `d35eafe8861b34b597b1640382854dadd82b39a5` and
+all three publisher/consumer artifacts. Review proposal SHA-256:
+`0253b029725f41612396acd39d9eeca2d68fc5aa7f2a33fa2b072b51921ca161`.
+One writer executes dependent slices; no runtime acceptance follows from source proof.
+
+1. Artifact admission (four files): this plan, `scripts/ci/staging-release.py`,
+   `tests/test_staging_release_gate.py`, `docs/delivery/staging.md`. Replace the
+   archived disposition gate with externally hash-pinned expected PHP/Nginx/MariaDB
+   evidence, exact build source/run/attempt/digest/config and raw hashes, current
+   upstream security policy, strict coverage and <=24h scan/DB freshness. Reuse
+   validators and online signature verification on owned temporary copies.
+   Prove substitutions, missing coverage/signatures, stale/future evidence fail.
+2. Selected-triple runtime (four files): `deploy/staging.compose.yaml`,
+   `scripts/delivery/operate.py`, `tests/test_operational_delivery_gate.py`,
+   `docs/delivery/staging.md`. No-build exact digest adapter, separate staging and
+   production resources, image-seeded configuration/code volumes and controlled
+   private Chrome/admin/public/export/restart proof with mail disabled.
+3. Recovery/promotion (five files): operation helper and operational tests,
+   `docs/runbook.md`, this plan and delivery document. Paired quiesced DB/files
+   backup, private off-host copy, isolated verified restore; serialized supported
+   712-to-717 rehearsal with downgrade fence and semantic checks; same-digest
+   promotion and post-deploy proof, paired rollback and preserved failed state.
+
+The union is exactly the eight files above. Artifact build source and later
+deployment configuration source are separate identities. No renewed waivers,
+receipt timestamp rewriting, new provider/runner/orchestration stack, OCI work
+or Formbricks retirement. Each slice runs targeted checks; all `test_*gate.py`
+regressions and `git diff --check` pass before source acceptance. Runtime, backup,
+restore, promotion and rollback require their own fresh evidence.
+
+Fresh production read-only inventory found schema 712 and 59 MyISAM tables.
+Consistent paired recovery must quiesce all writers and use verified
+`--lock-all-tables` (or an explicitly verified physical stopped backup);
+`--single-transaction --skip-lock-tables` does not establish MyISAM consistency.
+Retain byte-exact security/config files, any operator `allowed_hosts.php`, Demo
+and ResendEmail plugins, custom themes, uploads and writable runtime in the paired
+archive. Existing surveys/users remain preserved throughout operational work.

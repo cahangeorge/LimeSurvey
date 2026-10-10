@@ -1,0 +1,180 @@
+name: MariaDB derivative release
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mariadb-release-main
+  cancel-in-progress: false
+
+jobs:
+  artifact:
+    name: Build, publish and verify ARM64 candidate
+    if: github.repository == 'cahangeorge/LimeSurvey' && github.ref == 'refs/heads/main' && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      actions: read
+      packages: write
+      id-token: write
+    env:
+      IMAGE: ghcr.io/cahangeorge/limesurvey-mariadb
+
+    steps:
+      - name: Check out exact integrated source without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test ! -e "$RUNNER_TEMP/mariadb-release-evidence"
+          mkdir -m 700 "$RUNNER_TEMP/mariadb-release-evidence"
+          printf 'EVIDENCE=%s/mariadb-release-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'RELEASE_TAG=%s:sha-%s-run-%s-%s\n' "$IMAGE" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Require protected main and successful CI for exact source
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/branches/main" > "$EVIDENCE/branch.json"
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-gate.yml/runs?event=push&head_sha=${GITHUB_SHA}&per_page=100" > "$EVIDENCE/runs.json"
+          python3 scripts/ci/mariadb-release.py preflight "$EVIDENCE/branch.json" "$EVIDENCE/runs.json" "$GITHUB_SHA" "$GITHUB_REF" > "$EVIDENCE/ci.json"
+
+      - name: Build once on native ARM64 and independently extract installed inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 15m docker buildx build --pull --load --platform linux/arm64 \
+            --provenance=false --sbom=false --file docker/mariadb/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/cahangeorge/LimeSurvey" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=11.4.13-noble-gosu1.19" \
+            --label "io.omnestack.limesurvey.component=mariadb" \
+            --tag "$RELEASE_TAG" .
+          docker image inspect --format '{{.Id}}' "$RELEASE_TAG" > "$RUNNER_TEMP/tested-image-id"
+          docker image inspect "$RELEASE_TAG" > "$EVIDENCE/candidate-image.json"
+          python3 scripts/ci/mariadb-release.py inventory "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/inventory.json"
+
+      - name: Bind official parent, rebuilt binary and native database regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          parent='docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39'
+          timeout 5m docker pull --platform linux/arm64 "$parent"
+          docker image inspect "$parent" > "$EVIDENCE/parent-image.json"
+          python3 scripts/ci/mariadb-release.py binary "$(docker image inspect --format '{{.Id}}' "$parent")" > "$EVIDENCE/parent-binary.json"
+          python3 scripts/ci/mariadb-release.py binary "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/buildinfo.json"
+          python3 scripts/ci/mariadb-release.py regression "$(cat "$RUNNER_TEMP/tested-image-id")" "$EVIDENCE"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          tested = {'image_id': (Path(os.environ['RUNNER_TEMP']) / 'tested-image-id').read_text().strip(),
+                    'artifact': os.environ['RUNNER_TEMP'] + '/mariadb-candidate.tar'}
+          (root / 'tested.json').write_text(json.dumps(tested, indent=2) + '\n')
+          PYTHON
+
+      - name: Install checksum-verified ARM64 image scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 \
+            --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
+            --output "$RUNNER_TEMP/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-ARM64.tar.gz
+          printf '%s  %s\n' a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3 "$RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" --no-same-owner --no-same-permissions trivy
+          chmod 755 "$RUNNER_TEMP/trivy"
+
+      - name: Scan exported candidate before registry authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 5m docker image save --output "$RUNNER_TEMP/mariadb-candidate.tar" "$(cat "$RUNNER_TEMP/tested-image-id")"
+          "$RUNNER_TEMP/trivy" image --input "$RUNNER_TEMP/mariadb-candidate.tar" \
+            --cache-dir "$RUNNER_TEMP/release-trivy-cache" --timeout 8m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check --config '' \
+            --scanners vuln --list-all-pkgs --ignorefile '' \
+            --format json --output "$EVIDENCE/candidate-scan.json"
+          cp "$RUNNER_TEMP/release-trivy-cache/db/metadata.json" "$EVIDENCE/candidate-db.json"
+          python3 scripts/ci/mariadb-release.py candidate "$EVIDENCE" "$GITHUB_SHA"
+
+      - name: Recheck main before publishing any candidate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/branches/main" > "$EVIDENCE/branch.json"
+          timeout 90s gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/release-gate.yml/runs?event=push&head_sha=${GITHUB_SHA}&per_page=100" > "$EVIDENCE/runs.json"
+          python3 scripts/ci/mariadb-release.py preflight "$EVIDENCE/branch.json" "$EVIDENCE/runs.json" "$GITHUB_SHA" "$GITHUB_REF" > "$EVIDENCE/ci.json"
+
+      - name: Publish candidate and scan exact registry digest before creating manifest
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mariadb_auth_dir="$RUNNER_TEMP/mariadb-release-docker-auth"
+          export DOCKER_CONFIG="$mariadb_auth_dir"
+          mkdir -m 700 "$mariadb_auth_dir"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf -- "$mariadb_auth_dir"' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | timeout 90s docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          timeout 10m docker push "$RELEASE_TAG" | tee "$RUNNER_TEMP/push.log"
+          unset REGISTRY_TOKEN
+          sed -n 's/^.*digest: \(sha256:[0-9a-f]\{64\}\).*$/\1/p' "$RUNNER_TEMP/push.log" > "$RUNNER_TEMP/final-digest"
+          test "$(wc -l < "$RUNNER_TEMP/final-digest")" = 1
+          digest=$(cat "$RUNNER_TEMP/final-digest")
+          ref="$IMAGE@$digest"
+          timeout 90s docker buildx imagetools inspect --raw "$ref" > "$EVIDENCE/registry-manifest.json"
+          timeout 5m docker pull --platform linux/arm64 "$ref"
+          test "$(docker image inspect --format '{{.Id}}' "$ref")" = "$(cat "$RUNNER_TEMP/tested-image-id")"
+          docker image inspect "$ref" > "$EVIDENCE/image.json"
+          python3 scripts/ci/mariadb-release.py inventory "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/final-inventory.json"
+          "$RUNNER_TEMP/trivy" image --image-src remote --platform linux/arm64 \
+            --cache-dir "$RUNNER_TEMP/release-trivy-cache" --timeout 8m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check --config '' \
+            --scanners vuln --list-all-pkgs --ignorefile '' \
+            --format json --output "$EVIDENCE/scan.json" "$ref"
+          cp "$RUNNER_TEMP/release-trivy-cache/db/metadata.json" "$EVIDENCE/db.json"
+          "$RUNNER_TEMP/trivy" convert --config '' --ignorefile '' --scanners vuln \
+            --format cyclonedx --output "$EVIDENCE/sbom.cdx.json" "$EVIDENCE/scan.json"
+          python3 scripts/ci/mariadb-release.py manifest "$EVIDENCE" "$digest" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+
+      - name: Install pinned release signature verifier
+        uses: sigstore/cosign-installer@ba7bc0a3fef59531c69a25acd34668d6d3fe6f22 # v4.1.0
+        with:
+          cosign-release: v3.1.3
+
+      - name: Sign and verify exact image, provenance and SBOM
+        shell: bash
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          signing_auth_dir="$RUNNER_TEMP/mariadb-signing-docker-auth"
+          export DOCKER_CONFIG="$signing_auth_dir"
+          mkdir -m 700 "$signing_auth_dir"
+          trap 'docker logout ghcr.io >/dev/null 2>&1 || true; rm -rf -- "$signing_auth_dir"' EXIT
+          printf '%s' "$REGISTRY_TOKEN" | timeout 90s docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+          unset REGISTRY_TOKEN
+          python3 scripts/ci/sign-release.py sign "$EVIDENCE" mariadb "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT"
+
+      - name: Preserve bounded evidence including failed vulnerability scans
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mariadb-release-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mariadb-release-evidence/
+          if-no-files-found: error
+          retention-days: 30

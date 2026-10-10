@@ -16,6 +16,7 @@ ISSUER = "https://token.actions.githubusercontent.com"
 PROVENANCE_TYPE = "https://slsa.dev/provenance/v1"
 SBOM_TYPE = "https://cyclonedx.org/bom"
 COMPONENTS = {
+    "mariadb": ("ghcr.io/cahangeorge/limesurvey-mariadb", "mariadb-release.yml", "DATABASE_ARTIFACT_VERIFIED", "digest"),
     "php": ("ghcr.io/cahangeorge/limesurvey", "release.yml", "ARTIFACT_VERIFIED", "digest"),
     "nginx": ("ghcr.io/cahangeorge/limesurvey-nginx", "nginx-release.yml", "COMPANION_ARTIFACT_VERIFIED", "registry_manifest_digest"),
 }
@@ -56,6 +57,11 @@ def context(root, component, sha, run_id, attempt):
             and ci.get("path") == ".github/workflows/release-gate.yml", "required CI source mismatch")
     hashes = release["evidence_sha256"]
     require(isinstance(hashes, dict) and REQUIRED_EVIDENCE <= hashes.keys(), "missing required evidence hashes")
+    if component == "mariadb":
+        require({"buildinfo.json", "parent-image.json", "parent-binary.json", "regression.json",
+                 "final-inventory.json", "candidate-image.json", "candidate-scan.json",
+                 "candidate-db.json", "tested.json", "branch.json", "runs.json"} <= hashes.keys(),
+                "missing database evidence hashes")
     for name, expected in hashes.items():
         require(isinstance(name, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", name)
                 and isinstance(expected, str) and re.fullmatch(r"[0-9a-f]{64}", expected), "unsafe evidence name or hash")

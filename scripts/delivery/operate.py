@@ -680,6 +680,7 @@ def recovery_plan(path, digest, rescue=False):
     for name in plan['custom_plugins'] + plan['custom_themes'] + plan['operator_config_files']:
         require(isinstance(name, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9_.-]*', name))
     require(not set(plan['operator_config_files']) & {'internal.php', 'version.php', 'config-defaults.php', 'routes.php'})
+    require(isinstance(plan.get('trusted_proxy'), dict))
     plan.update(_plan_sha256=digest, _legacy=services, _source=source, _candidate=candidate)
     return plan
 
@@ -692,6 +693,22 @@ def provider_gate(plan):
     recent(value['checked_at'], 600)
 
 
+def proxy_identity(plan):
+    expected = plan['trusted_proxy']
+    require(set(expected) == {'Id', 'Image', 'Name', 'compose_project', 'compose_service'}
+            and re.fullmatch(r'[0-9a-f]{64}', expected['Id'])
+            and re.fullmatch(r'sha256:[0-9a-f]{64}', expected['Image'])
+            and expected['Name'] == '/coolify-proxy'
+            and expected['compose_project'] == 'coolify-proxy' and expected['compose_service'] == 'traefik')
+    inspected = json.loads(docker('inspect', expected['Id'])); require(len(inspected) == 1)
+    item = inspected[0]; labels = item['Config']['Labels']
+    require(all(item[key] == expected[key] for key in ('Id', 'Image', 'Name'))
+            and labels.get('com.docker.compose.project') == expected['compose_project']
+            and labels.get('com.docker.compose.service') == expected['compose_service']
+            and item['State']['Running'] is True)
+    return expected['Id']
+
+
 def legacy_state(plan, running=True):
     ids = docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=' + plan['application_uuid']).decode().split()
     require(set(ids) == {item['Id'] for item in plan['_legacy'].values()})
@@ -702,11 +719,12 @@ def legacy_state(plan, running=True):
                 and item['Mounts'] == original['Mounts'] and item['Config'] == original['Config']
                 and set(item['NetworkSettings']['Networks']) == set(original['NetworkSettings']['Networks']))
         if running: require(item['State']['Running'] is True and item['State'].get('Health', {}).get('Status') == 'healthy')
+    proxy_id = proxy_identity(plan)
     db = plan['_legacy']['db']
     require(not any(db['NetworkSettings']['Ports'].values()))
     for name, connection in db['NetworkSettings']['Networks'].items():
         network = json.loads(docker('network', 'inspect', connection['NetworkID']))[0]
-        require(set(network.get('Containers', {})) <= set(ids))
+        require(set(network.get('Containers', {})) <= set(ids) | {proxy_id})
 
 
 def database(db_id, statement):
@@ -716,7 +734,7 @@ def database(db_id, statement):
 
 
 def config_metadata(app_id):
-    code = '$c=include "application/config/config.php"; $s=include "application/config/security.php"; echo json_encode(["prefix"=>$c["components"]["db"]["tablePrefix"],"security"=>["encryptionnonce"=>!empty($s["encryptionnonce"]),"encryptionsecretboxkey"=>!empty($s["encryptionsecretboxkey"])]]);'
+    code = 'define("BASEPATH", "/var/www/html/"); $c=include "application/config/config.php"; $s=include "application/config/security.php"; echo json_encode(["prefix"=>$c["components"]["db"]["tablePrefix"],"security"=>["encryptionnonce"=>!empty($s["encryptionnonce"]),"encryptionsecretboxkey"=>!empty($s["encryptionsecretboxkey"])]]);'
     result = json.loads(docker('exec', app_id, 'php', '-r', code))
     require(re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', result['prefix'])
             and result['security'] == {'encryptionnonce': True, 'encryptionsecretboxkey': True})
@@ -892,6 +910,11 @@ def selected_compose(plan, isolated):
                 require(service == 'nginx' and mount['target'] == '/etc/nginx/conf.d/default.conf')
                 mount['source'] = str(Path(candidate['repository_root']) / 'docker/nginx/default.conf'); mount['read_only'] = True
             else: require(mount['type'] == 'tmpfs')
+    require('delivery-private' not in source['networks'])
+    require(isinstance(source['services']['app']['networks'], dict))
+    source['services']['db']['networks'] = {'delivery-private': {}}
+    source['services']['app']['networks']['delivery-private'] = {}
+    source['networks']['delivery-private'] = {'external': True, 'name': candidate['networks']['backend']}
     source['volumes'] = {name: {'external': True, 'name': name} for name in candidate['volumes'].values()}
     if isolated: source['networks'] = {name: {'external': True, 'name': actual} for name, actual in candidate['networks'].items()}
     else:
@@ -1133,7 +1156,12 @@ def production_runtime(plan, state, fenced=True):
         for name in expected:
             matches = [mount for mount in mounts if mount['Destination'] == VOLUMES[name]]
             require(len(matches) == 1 and matches[0]['Name'] == candidate['volumes'][name] and matches[0]['RW'] is (service != 'nginx'))
-        require(set(item['NetworkSettings']['Networks']) == set(plan['_legacy'][service]['NetworkSettings']['Networks']))
+        private = candidate['networks']['backend']
+        expected_networks = {private} if service == 'db' else set(plan['_legacy'][service]['NetworkSettings']['Networks'])
+        if service == 'app': expected_networks |= {private}
+        networks = item['NetworkSettings']['Networks']; require(set(networks) == expected_networks)
+        if service in ('app', 'db'):
+            require(networks[private]['NetworkID'] == candidate_state['resources'][private]['id'])
         require(not item['HostConfig'].get('Privileged', False) and not item['HostConfig'].get('CapAdd')
                 and not item['HostConfig'].get('Devices') and item['HostConfig'].get('PidMode', '') == '')
         if service == 'db':

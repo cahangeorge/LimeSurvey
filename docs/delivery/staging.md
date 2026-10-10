@@ -226,6 +226,7 @@ files; do not publish the files):
 | --- | --- |
 | `application_uuid` | Existing selected production app, never a new production app |
 | `legacy_inspect`, `legacy_inspect_sha256` | Exact original three containers, images, mounts, environments and networks |
+| `trusted_proxy` | Exact live proxy metadata: `Id`, actual Docker image-ID `Image`, `Name`, `compose_project`, `compose_service`; only `/coolify-proxy` in project `coolify-proxy`, service `traefik` |
 | `legacy_compose`, `legacy_compose_sha256` | Server-only expanded private Compose JSON; preserve routes/environment, remove build |
 | `candidate_manifest`, `candidate_manifest_sha256` | Fresh isolated restore resources and current admitted triple; includes reviewed B configuration bindings |
 | `accepted_stage_manifest`, `accepted_stage_manifest_sha256`, `accepted_stage_receipt`, `accepted_stage_receipt_sha256` | Same triple/config and completed staging persistence proof |
@@ -278,3 +279,18 @@ updater containers remain stopped with protected logs. Legacy rescue is allowed
 from the hash-bound original pair even when candidate admission expires; it
 never reports security PASS. Actual runtime checks, off-host transfer and browser
 acknowledgements are controller evidence, not results of these offline tests.
+
+The legacy backup topology may include the existing provider proxy on the
+original networks. The plan pins its complete container/image ID and exact
+name/project/service; the helper independently verifies that live identity.
+Only the three recorded legacy services plus that exact proxy may be network
+members. An additional container or substituted proxy blocks backup. This
+exception authorizes no proxy or global-network mutation.
+
+Promoted MariaDB joins only the recorded owned internal candidate backend,
+without published ports or foreign members. Production Compose declares this
+external owned network as `delivery-private`; app joins it in addition to its
+original route/egress networks. Nginx retains its original networks and route
+labels. Runtime inspection requires these exact sets and the recorded private
+network ID. The legacy shared-provider DB topology is never copied to the new
+production DB.

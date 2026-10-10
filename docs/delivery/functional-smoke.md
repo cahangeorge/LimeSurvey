@@ -24,10 +24,13 @@ workflows and this document. Keep ordinary smoke behavior unless the explicit
 PASS requires a real public browser submission, visible completion screenshot,
 exact marker and completed response identity before/after restart, unchanged
 image/volume identities, and successful cleanup. API insertion is insufficient.
-Every failure invalidates any old receipt and suppresses exception details,
+Every failure invalidates any old receipt and suppresses raw exception messages,
 credentials, session keys, configuration, raw CSV and command output. Evidence
 contains only synthetic screenshot, aggregate count, source/image/browser
 identities and hashes; no administrator or response payload.
+Failure logs contain only a constant phase name and an allowed error category.
+Compose may omit an optional service environment map; the validator accepts
+that shape while retaining the private-DB and isolated-resource checks.
 
 The helper chooses `ls-functional-<32 hex>` itself. It rejects caller project,
 environment-file, retained-stack and Compose override settings. It only reads

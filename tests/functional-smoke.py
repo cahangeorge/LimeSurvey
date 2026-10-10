@@ -28,6 +28,7 @@ pyee==13.0.1 --hash=sha256:af2f8fede4171ef667dfded53f96e2ed0d6e6bd7ee3bb46437f77
 typing_extensions==4.16.0 --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8
 '''
 ROOT = Path(__file__).resolve().parents[1]
+STAGE = 'preflight'
 
 
 class GateError(Exception):
@@ -99,7 +100,7 @@ def validate_config(config, project):
     for name, service in config['services'].items():
         require(not service.get('network_mode'))
         require(not service.get('container_name'))
-        require(service['environment'].get('DB_HOST', 'db') == 'db')
+        require(service.get('environment', {}).get('DB_HOST', 'db') == 'db')
         for port in service.get('ports', []):
             require(name == 'nginx' and port['host_ip'] == '127.0.0.1' and
                     int(port['target']) == 80 and str(port['published']) == '0')
@@ -161,6 +162,8 @@ def bootstrap(directory):
 
 class Roundtrip:
     def __init__(self, temp, evidence):
+        global STAGE
+        STAGE = 'environment'
         self.project = 'ls-functional-' + secrets.token_hex(16)
         self.env = clean_environment()
         self.temp = Path(temp)
@@ -169,7 +172,9 @@ class Roundtrip:
         self.admin_password = secrets.token_urlsafe(32)
         self.marker = 'synthetic-' + secrets.token_hex(16)
         self.image = os.environ['APP_IMAGE']
+        STAGE = 'browser-identity'
         self.browser_options, self.browser_version = browser_options(os.environ['FUNCTIONAL_CHROME'])
+        STAGE = 'image-identity'
         self.source = run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip()
         inspect = json.loads(run(['docker', 'image', 'inspect', self.image]))[0]
         require(inspect['Config']['Labels']['io.omnestack.limesurvey.upstream-revision'] == UPSTREAM)
@@ -196,6 +201,7 @@ class Roundtrip:
         self.command = ['docker', 'compose', '--project-name', self.project,
                         '--env-file', str(envfile), '-f', str(ROOT / 'compose.yaml'),
                         '-f', str(override)]
+        STAGE = 'compose-config'
         config = json.loads(self.compose('config', '--format', 'json'))
         validate_config(config, self.project)
         # Check exact names too: an existing unlabelled volume must never be adopted.
@@ -238,10 +244,13 @@ class Roundtrip:
                        mount['Name']) for item in state for mount in item['Mounts'] if mount['Type'] == 'volume')
 
     def execute(self):
+        global STAGE
+        STAGE = 'compose-start'
         self.owned = True
         self.compose('pull', 'db', 'nginx', timeout=300)
         self.compose('up', '-d', '--no-build', '--pull', 'never', timeout=300)
         self.wait()
+        STAGE = 'empty-database'
         # Fresh project volumes alone are insufficient: prove no tables/config.
         count = self.compose('exec', '-T', 'db', 'sh', '-eu', '-c',
             'export MYSQL_PWD=$MARIADB_PASSWORD; mariadb --batch --skip-column-names '
@@ -249,6 +258,7 @@ class Roundtrip:
         require(not count.strip())
         self.compose('exec', '-T', 'app', 'sh', '-eu', '-c',
                      'test ! -e application/config/config.php')
+        STAGE = 'install'
         configuration = '''<?php return ['components'=>['db'=>[
 'class'=>'CDbConnection','connectionString'=>'mysql:host=db;port=3306;dbname='.getenv('DB_NAME'),
 'username'=>getenv('DB_USER'),'password'=>getenv('DB_PASSWORD'),'charset'=>'utf8mb4',
@@ -267,6 +277,7 @@ class Roundtrip:
         port = self.compose('port', 'nginx', '80').decode().strip()
         require(bool(re.fullmatch(r'127\.0\.0\.1:[1-9][0-9]*', port)))
         self.url = 'http://' + port
+        STAGE = 'survey-setup'
         key = self.authenticate()
         sid = self.api('add_survey', key, 0, 'Synthetic functional probe', 'en', 'A')
         require(type(sid) is int and sid > 0)
@@ -283,6 +294,7 @@ class Roundtrip:
         activation = self.api('activate_survey', key, sid)
         require(isinstance(activation, dict) and activation.get('status') == 'OK')
         from playwright.sync_api import sync_playwright
+        STAGE = 'browser-submit'
         with sync_playwright() as playwright:
             browser = playwright.chromium.launch(**self.browser_options)
             context = browser.new_context()
@@ -295,13 +307,16 @@ class Roundtrip:
             page.screenshot(path=str(self.evidence / 'synthetic-completion.png'))
             context.close()
             browser.close()
+        STAGE = 'export-before'
         before = exported(self.api('export_responses', key, sid, 'csv', 'en', 'complete', 'code', 'short'), self.marker)
         self.api('release_session_key', key)
         volumes = self.volume_ids()
+        STAGE = 'restart'
         self.compose('restart', 'db', 'app', timeout=180)
         self.wait()
         require(self.volume_ids() == volumes)
         require(json.loads(run(['docker', 'image', 'inspect', self.image]))[0]['Id'] == self.image_id)
+        STAGE = 'export-after'
         key = self.authenticate()
         after = exported(self.api('export_responses', key, sid, 'csv', 'en', 'complete', 'code', 'short'), self.marker)
         require(before == after)
@@ -313,11 +328,15 @@ class Roundtrip:
                 'export_sha256': before[1], 'restart': 'PASS'}
 
     def cleanup(self):
+        global STAGE
         if self.owned:
+            previous_stage = STAGE
+            STAGE = 'cleanup'
             self.compose('down', '--volumes', '--remove-orphans', timeout=180)
             for resource in ('container', 'volume', 'network'):
                 require(not run(['docker', resource, 'ls', '-q', '--filter',
                     'label=com.docker.compose.project=' + self.project]).strip())
+            STAGE = previous_stage
 
 
 def roundtrip():
@@ -412,7 +431,9 @@ class SelfTest(unittest.TestCase):
                                     env=env, capture_output=True, timeout=10)
             self.assertEqual(result.returncode, 1)
             self.assertEqual(result.stdout, b'')
-            self.assertEqual(result.stderr, b'functional_roundtrip=FAIL (details suppressed)\n')
+            self.assertRegex(result.stderr.decode(),
+                r'^functional_roundtrip=FAIL stage=[a-z-]+ category=[A-Za-z]+\n$')
+            self.assertNotIn(b'synthetic-secret-never-log', result.stderr)
             self.assertFalse((Path(temp) / 'functional-receipt.json').exists())
 
     def test_reject_config(self):
@@ -424,6 +445,9 @@ class SelfTest(unittest.TestCase):
             name: {'environment': {}, 'volumes': []} for name in ('db', 'app', 'nginx')}}
         config['services']['db']['networks'] = {'backend': None}
         config['services']['nginx']['ports'] = [{'host_ip': '127.0.0.1', 'target': 80, 'published': '0'}]
+        validate_config(config, project)
+        # Compose omits optional environment on the Nginx service.
+        del config['services']['nginx']['environment']
         validate_config(config, project)
         for change in ('external', 'production_name', 'driver', 'db_port', 'public_port', 'bind', 'remote_db', 'host_network', 'public_backend', 'db_egress'):
             value = deepcopy(config)
@@ -483,6 +507,10 @@ if __name__ == '__main__':
             roundtrip()
         else:
             raise GateError('unsupported command')
-    except Exception:
-        print('functional_roundtrip=FAIL (details suppressed)', file=sys.stderr)
+    except Exception as error:
+        category = type(error).__name__
+        if category not in {'GateError', 'KeyError', 'ValueError', 'OSError',
+                            'TimeoutExpired', 'HTTPError', 'URLError', 'Error'}:
+            category = 'RuntimeError'
+        print(f'functional_roundtrip=FAIL stage={STAGE} category={category}', file=sys.stderr)
         sys.exit(1)

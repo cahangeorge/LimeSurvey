@@ -29,6 +29,9 @@ MODULES = {'github.com/moby/sys/user': ['v0.4.1', 'h1:RgjRlaDKi/Xmyrz4t8lyzXT6v2
 SETTINGS = {'-buildmode': 'exe', '-compiler': 'gc', '-trimpath': 'true', 'CGO_ENABLED': '0',
             'GOARCH': 'arm64', 'GOOS': 'linux', 'GOARM64': 'v8.0',
             'DefaultGODEBUG': 'tracebacklabels=0,x509sslcertoverrideplatform=0'}
+GOSU_MODULE = 'github.com/tianon/gosu'
+GOSU_PURL = 'pkg:golang/' + GOSU_MODULE
+GO_PACKAGES = {(name, value[0]) for name, value in MODULES.items()} | {('stdlib', 'v1.27.2')}
 REGRESSION_CHECKS = ('mysql', 'numeric', 'groups', 'home', 'exec', 'failure', 'fresh_init', 'nonroot_restart', 'persistence')
 
 
@@ -198,6 +201,30 @@ def purl_identity(purl, kind, name, version, architecture=None):
     return purl
 
 
+def validate_go_packages(packages, build):
+    validate_build(build)
+    require(build['main'] == '(devel)' and isinstance(packages, list)
+            and len(packages) == len(GO_PACKAGES) + 1
+            and all(isinstance(pkg, dict) and isinstance(pkg.get('Name'), str) for pkg in packages)
+            and len({pkg['Name'] for pkg in packages}) == len(packages), 'invalid archive Go package coverage')
+    roots = [pkg for pkg in packages if pkg['Name'] == GOSU_MODULE]
+    require(len(roots) == 1, 'missing archive gosu root')
+    root = roots[0]
+    dependencies = root.get('DependsOn')
+    require('Version' not in root and root.get('ID') == GOSU_MODULE
+            and root.get('Identifier', {}).get('PURL') == GOSU_PURL and root.get('Relationship') == 'root'
+            and isinstance(dependencies, list) and len(dependencies) == len(GO_PACKAGES)
+            and all(isinstance(dep, str) for dep in dependencies)
+            and set(dependencies) == {name + '@' + version for name, version in GO_PACKAGES},
+            'archive gosu root identity/dependency mismatch')
+    versioned = [pkg for pkg in packages if pkg is not root]
+    require(all(isinstance(pkg.get('Version'), str) and pkg['Version']
+                and pkg.get('ID') == pkg['Name'] + '@' + pkg['Version'] for pkg in versioned)
+            and shared.pairs(versioned, 'Name', 'Version') == GO_PACKAGES,
+            'Go compiler/module version coverage mismatch')
+    return root
+
+
 def validate_scan(report, inventory, db, image_id, artifact, now, ref=None):
     validate_build(inventory['gosu'])
     require(inventory.get('image_id') == image_id and inventory.get('os_family') == 'ubuntu'
@@ -225,16 +252,17 @@ def validate_scan(report, inventory, db, image_id, artifact, now, ref=None):
     require(all(isinstance(p, list) and len(p) == 3 and p[2] in ('arm64', 'all') for p in inventory['os']),
             'missing installed OS architecture')
     installed_arch = {p[0]: p[2] for p in inventory['os']}
-    expected = {(name, value[0]) for name, value in MODULES.items()} | {('stdlib', 'v1.27.2')}
-    main = inventory['gosu']['main']
-    actual = shared.pairs(go_results[0].get('Packages'), 'Name', 'Version')
-    # Trivy may include the archive main module; it must match build metadata.
-    require(actual in (expected, expected | {('github.com/tianon/gosu', main)}), 'Go compiler/module coverage mismatch')
+    root = validate_go_packages(go_results[0].get('Packages'), inventory['gosu'])
     purls = set()
     for result in results:
         packages = result['Packages']
-        require(len(packages) == len(shared.pairs(packages, 'Name', 'Version', debian=result['Type'] == 'ubuntu')), 'duplicate scan package')
+        if result['Type'] == 'ubuntu':
+            require(len(packages) == len(shared.pairs(packages, 'Name', 'Version', debian=True)), 'duplicate scan package')
         for pkg in packages:
+            if pkg is root:
+                require(GOSU_PURL not in purls, 'duplicate archive root PURL')
+                purls.add(GOSU_PURL)
+                continue
             version = next(iter(shared.pairs([pkg], 'Name', 'Version', debian=result['Type'] == 'ubuntu')))[1]
             architecture = installed_arch[pkg['Name']] if result['Type'] == 'ubuntu' else None
             if architecture:
@@ -348,23 +376,12 @@ def candidate(root, sha, now):
     return image, inventory
 
 
-def manifest(root, digest, sha, run_id, attempt, now):
-    (root / 'release.json').unlink(missing_ok=True)
-    image, inventory = candidate(root, sha, now)
-    require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0, 'invalid publisher run')
-    raw = (root / 'registry-manifest.json').read_bytes(); identity(digest)
-    require('sha256:' + hashlib.sha256(raw).hexdigest() == digest, 'registry digest mismatch')
-    registry = json.loads(raw)
-    require(registry.get('schemaVersion') == 2 and registry.get('mediaType') in shared.MANIFEST_TYPES
-            and registry.get('layers') and registry['config']['digest'] == image['Id'], 'registry config mismatch')
-    ref = IMAGE + '@' + digest; final = validate_candidate_image(shared.load(root / 'image.json'), sha)
-    require(final['Id'] == image['Id'] and ref in final.get('RepoDigests', []), 'published/tested identity mismatch')
-    require(shared.load(root / 'final-inventory.json') == inventory, 'published inventory changed')
-    purls = validate_scan(shared.load(root / 'scan.json'), inventory, shared.load(root / 'db.json'), image['Id'], ref, now, ref)
-    sbom = shared.load(root / 'sbom.cdx.json'); component = sbom['metadata']['component']
+def validate_sbom(sbom, purls, image_id, ref, build):
+    validate_build(build)
+    component = sbom['metadata']['component']
     require(sbom.get('bomFormat') == 'CycloneDX' and sbom.get('specVersion') == '1.7'
             and component.get('name') == ref and component.get('type') == 'container'
-            and {'name': 'aquasecurity:trivy:ImageID', 'value': image['Id']} in component.get('properties', []), 'SBOM image mismatch')
+            and {'name': 'aquasecurity:trivy:ImageID', 'value': image_id} in component.get('properties', []), 'SBOM image mismatch')
     covered = set(); applications = 0
     for package in sbom['components']:
         if package.get('type') == 'operating-system':
@@ -378,9 +395,41 @@ def manifest(root, digest, sha, run_id, attempt, now):
         purl = package.get('purl')
         require(package.get('type') == 'library' and purl in purls and purl not in covered
                 and package.get('bom-ref') == purl, 'SBOM package coverage mismatch')
-        kind = 'ubuntu' if purl.startswith('pkg:deb/') else 'gobinary'
-        purl_identity(purl, kind, package['name'], package['version']); covered.add(purl)
+        if purl == GOSU_PURL:
+            require(build['main'] == '(devel)' and package.get('name') == GOSU_MODULE and 'version' not in package
+                    and {'name': 'aquasecurity:trivy:PkgID', 'value': GOSU_MODULE} in package.get('properties', [])
+                    and {'name': 'aquasecurity:trivy:PkgType', 'value': 'gobinary'} in package.get('properties', []),
+                    'SBOM archive gosu root mismatch')
+        else:
+            require(isinstance(package.get('version'), str) and package['version'], 'missing SBOM package version')
+            kind = 'ubuntu' if purl.startswith('pkg:deb/') else 'gobinary'
+            purl_identity(purl, kind, package['name'], package['version'])
+        covered.add(purl)
     require(covered == purls and applications == 1, 'incomplete SBOM coverage')
+    dependencies = sbom.get('dependencies')
+    require(isinstance(dependencies, list), 'missing SBOM archive dependency graph')
+    roots = [item for item in dependencies if item.get('ref') == GOSU_PURL]
+    expected = {'pkg:golang/' + name + '@' + version for name, version in GO_PACKAGES}
+    require(len(roots) == 1 and isinstance(roots[0].get('dependsOn'), list)
+            and len(roots[0]['dependsOn']) == len(expected)
+            and all(isinstance(item, str) for item in roots[0]['dependsOn'])
+            and set(roots[0]['dependsOn']) == expected, 'SBOM archive root dependency mismatch')
+
+
+def manifest(root, digest, sha, run_id, attempt, now):
+    (root / 'release.json').unlink(missing_ok=True)
+    image, inventory = candidate(root, sha, now)
+    require(type(run_id) is int and run_id > 0 and type(attempt) is int and attempt > 0, 'invalid publisher run')
+    raw = (root / 'registry-manifest.json').read_bytes(); identity(digest)
+    require('sha256:' + hashlib.sha256(raw).hexdigest() == digest, 'registry digest mismatch')
+    registry = json.loads(raw)
+    require(registry.get('schemaVersion') == 2 and registry.get('mediaType') in shared.MANIFEST_TYPES
+            and registry.get('layers') and registry['config']['digest'] == image['Id'], 'registry config mismatch')
+    ref = IMAGE + '@' + digest; final = validate_candidate_image(shared.load(root / 'image.json'), sha)
+    require(final['Id'] == image['Id'] and ref in final.get('RepoDigests', []), 'published/tested identity mismatch')
+    require(shared.load(root / 'final-inventory.json') == inventory, 'published inventory changed')
+    purls = validate_scan(shared.load(root / 'scan.json'), inventory, shared.load(root / 'db.json'), image['Id'], ref, now, ref)
+    validate_sbom(shared.load(root / 'sbom.cdx.json'), purls, image['Id'], ref, inventory['gosu'])
     ci = shared.preflight(shared.load(root / 'branch.json'), shared.load(root / 'runs.json'), sha, 'refs/heads/main')
     require(ci == shared.load(root / 'ci.json'), 'CI mismatch')
     files = ('registry-manifest.json', 'image.json', 'inventory.json', 'final-inventory.json', 'scan.json', 'db.json', 'sbom.cdx.json', 'ci.json',
@@ -389,7 +438,7 @@ def manifest(root, digest, sha, run_id, attempt, now):
     result = {'schema_version': 1, 'status': 'DATABASE_ARTIFACT_VERIFIED', 'component': 'mariadb', 'repository': shared.REPOSITORY,
               'source_commit': sha, 'image': ref, 'digest': digest, 'image_config_digest': image['Id'], 'platform': 'linux/arm64',
               'parent': BASE, 'gosu': inventory['gosu'], 'regression': shared.load(root / 'regression.json'),
-              'scan': {'status': 'PASS', 'tool': 'Trivy 0.75.0', 'os_packages': len(inventory['os']), 'go_packages': 3},
+              'scan': {'status': 'PASS', 'tool': 'Trivy 0.75.0', 'os_packages': len(inventory['os']), 'go_packages': len(GO_PACKAGES) + 1},
               'ci': ci, 'release_run': {'id': run_id, 'attempt': attempt},
               'evidence_sha256': {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in files},
               'staging': {'status': 'PENDING'}, 'production': {'status': 'HOLD'}}

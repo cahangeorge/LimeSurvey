@@ -21,7 +21,14 @@ class MariaDBTests(unittest.TestCase):
                 'path': 'github.com/tianon/gosu', 'sha256': 'a' * 64, 'static_arm64': True, 'version': '1.19'}
 
     def test_strict_binary_build_identity(self):
-        gate.validate_build(self.build())
+        expected = self.build()
+        expected['settings']['DefaultGODEBUG'] = 'tracebacklabels=0,x509sslcertoverrideplatform=0'
+        gate.validate_build(expected)
+        for value in (None, 'tracebacklabels=1,x509sslcertoverrideplatform=0', 'arbitrary=1'):
+            build = self.build()
+            if value is None: build['settings'].pop('DefaultGODEBUG', None)
+            else: build['settings']['DefaultGODEBUG'] = value
+            with self.subTest(default_godebug=value), self.assertRaises(ValueError): gate.validate_build(build)
         for key, bad in [('source', 'b' * 40), ('compiler', 'go1.27.1'), ('static_arm64', False),
                          ('version', '1.18'), ('modules', {}), ('settings', {}), ('sha256', 'unknown'),
                          ('path', 'other/module')]:

@@ -137,6 +137,13 @@ jobs:
           set -euo pipefail
           test "$(uname -m)" = aarch64
 
+      - name: Install checksum-pinned functional browser tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/functional-smoke.py self-test
+          python3 tests/functional-smoke.py bootstrap "$RUNNER_TEMP/functional-tools"
+
       - name: Build the pinned LimeSurvey image natively
         shell: bash
         run: |
@@ -163,13 +170,6 @@ jobs:
               }
             }
           '
-
-      - name: Install checksum-pinned functional browser tools
-        shell: bash
-        run: |
-          set -euo pipefail
-          python3 tests/functional-smoke.py self-test
-          python3 tests/functional-smoke.py bootstrap "$RUNNER_TEMP/functional-tools"
 
       - name: Run the ARM64 Compose smoke test
         shell: bash

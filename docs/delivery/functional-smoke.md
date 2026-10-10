@@ -131,3 +131,21 @@ image does not need test assets or an additional network download.
 These repairs retain the mandatory native ARM64 functional gate. Local Podman
 diagnostic probes do not replace its exact-source CI acceptance. This synthetic
 installation also does not prove production table engines or backup consistency.
+
+## Hosted Chrome sandbox preflight
+
+Browser bootstrap now launches an isolated blank renderer with
+`chromium_sandbox=True` before the expensive native CI build. Failures emit
+only an allowlisted reason; raw browser diagnostics remain private.
+
+If that launch specifically reports sandbox denial and Ubuntu's AppArmor
+user-namespace restriction is enabled, bootstrap loads the documented
+`userns,` permission profile for the exact downloaded Chrome executable.
+The profile is restricted to the owned, checksum-pinned browser path on an
+ephemeral GitHub-hosted ARM64 runner, followed by another mandatory sandboxed
+launch. Self-hosted/local callers, alternate paths, root callers and unknown
+browser failures cannot trigger it. It does not disable AppArmor or change
+global namespace settings, and does not configure the laptop or deployment
+server. The profile disappears with the disposable hosted runner.
+
+Reference: [Ubuntu 24.04 namespace sandbox policy](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions).

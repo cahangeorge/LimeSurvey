@@ -180,6 +180,72 @@ def browser_options(executable):
     return {'executable_path': str(chrome), 'headless': True, 'chromium_sandbox': True}, version
 
 
+def browser_failure_reason(error):
+    # Inspect in memory; never publish browser stderr, URLs, cookies or page data.
+    message = str(error)
+    if any(value in message for value in ('No usable sandbox',
+            'Failed to move to new namespace', 'SUID sandbox helper',
+            'userns_create', 'apparmor_restrict_unprivileged_userns')):
+        return 'sandbox-denied'
+    return 'unknown'
+
+
+def ci_browser_profile(executable):
+    require(os.environ.get('GITHUB_ACTIONS') == 'true' and
+            os.environ.get('RUNNER_ENVIRONMENT') == 'github-hosted' and
+            os.geteuid() != 0 and platform.machine() == 'aarch64')
+    chrome = Path(executable).resolve()
+    expected = Path(os.environ['RUNNER_TEMP']).resolve() / 'functional-tools/chrome-linux-arm64/chrome'
+    require(chrome == expected and bool(re.fullmatch(r'/[A-Za-z0-9_./-]+', str(chrome))))
+    return ('abi <abi/4.0>,\ninclude <tunables/global>\n' +
+            str(chrome) + ' flags=(unconfined) {\n  userns,\n}\n')
+
+
+def browser_preflight():
+    global STAGE
+    STAGE = 'browser-preflight'
+    from playwright.sync_api import sync_playwright
+    options, _ = browser_options(os.environ['FUNCTIONAL_CHROME'])
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(**options)
+        try:
+            context = browser.new_context()
+            try:
+                page = context.new_page()
+                page.goto('about:blank')
+                require(page.evaluate('2 + 2') == 4)
+            finally:
+                context.close()
+        finally:
+            browser.close()
+    print('functional_browser_sandbox_preflight=PASS')
+
+
+def prepare_browser_sandbox(dest, python, chrome):
+    env = dict(os.environ, FUNCTIONAL_CHROME=str(chrome))
+    command = [python, str(Path(__file__).resolve()), 'browser-preflight']
+    probe = subprocess.run(command, env=env, capture_output=True, timeout=60)
+    if probe.returncode:
+        sandbox_denied = bool(re.fullmatch(
+            rb'functional_roundtrip=FAIL stage=browser-preflight category=[A-Za-z]+ reason=sandbox-denied\n',
+            probe.stderr)) and not probe.stdout
+        print('functional_browser_initial_preflight=FAIL reason=' +
+              ('sandbox-denied' if sandbox_denied else 'unknown'))
+        require(sandbox_denied)
+        # Ubuntu's documented exact-executable userns permission, only on an
+        # ephemeral hosted runner. Never disable AppArmor or a global sysctl.
+        require(Path('/proc/sys/kernel/apparmor_restrict_unprivileged_userns').read_text().strip() == '1')
+        profile = dest / 'chrome-userns.apparmor'
+        require(not profile.exists())
+        profile.write_text(ci_browser_profile(chrome))
+        profile.chmod(0o600)
+        run(['sudo', '-n', 'apparmor_parser', '--replace', str(profile)], timeout=30)
+        print('functional_browser_userns_profile=APPLIED_EPHEMERAL_EXACT_PATH')
+        probe = subprocess.run(command, env=env, capture_output=True, timeout=60)
+    require(probe.returncode == 0 and probe.stdout == b'functional_browser_sandbox_preflight=PASS\n')
+    print('functional_browser_sandbox_preflight=PASS')
+
+
 def bootstrap(directory):
     require(platform.machine() == 'aarch64' and sys.version_info[:2] == (3, 12))
     require(os.environ.get('GITHUB_ACTIONS') == 'true' and
@@ -211,6 +277,7 @@ def bootstrap(directory):
     chrome.chmod(0o755)
     # Playwright installs system libraries only in ephemeral hosted CI runners.
     run([python, '-m', 'playwright', 'install-deps', 'chromium'], timeout=300)
+    prepare_browser_sandbox(dest, python, chrome)
 
 
 class Roundtrip:
@@ -418,6 +485,32 @@ def roundtrip():
 
 
 class SelfTest(unittest.TestCase):
+    def test_browser_failure_reason(self):
+        self.assertEqual(browser_failure_reason(Exception('No usable sandbox! synthetic-secret')), 'sandbox-denied')
+        self.assertEqual(browser_failure_reason(Exception('Failed to move to new namespace: Operation not permitted')), 'sandbox-denied')
+        self.assertEqual(browser_failure_reason(Exception('unknown synthetic-secret')), 'unknown')
+
+    def test_ci_browser_profile_boundary(self):
+        from unittest.mock import patch
+        root = '/home/runner/work/_temp'
+        chrome = root + '/functional-tools/chrome-linux-arm64/chrome'
+        env = {'GITHUB_ACTIONS': 'true', 'RUNNER_ENVIRONMENT': 'github-hosted', 'RUNNER_TEMP': root}
+        with patch.dict(os.environ, env, clear=True), patch('os.geteuid', return_value=1001), \
+                patch('platform.machine', return_value='aarch64'):
+            profile = ci_browser_profile(chrome)
+            self.assertIn(chrome + ' flags=(unconfined)', profile)
+            self.assertIn('userns,', profile)
+            self.assertNotIn('sysctl', profile)
+            for value in ('/usr/bin/chrome', chrome + '-other', '/tmp/chrome'):
+                with self.assertRaises(GateError):
+                    ci_browser_profile(value)
+            with patch.dict(os.environ, {'RUNNER_ENVIRONMENT': 'self-hosted'}), self.assertRaises(GateError):
+                ci_browser_profile(chrome)
+            with patch('os.geteuid', return_value=0), self.assertRaises(GateError):
+                ci_browser_profile(chrome)
+        with patch.dict(os.environ, {}, clear=True), self.assertRaises(GateError):
+            ci_browser_profile(chrome)
+
     def test_rpc_errors(self):
         for value in ({}, {'id': 1, 'error': 'secret', 'result': 'x'},
                       {'id': 1, 'result': {'status': 'Invalid session key'}},
@@ -558,6 +651,8 @@ if __name__ == '__main__':
             signal.signal(signal.SIGTERM, interrupted)
             signal.signal(signal.SIGINT, interrupted)
             roundtrip()
+        elif sys.argv[1:] == ['browser-preflight']:
+            browser_preflight()
         else:
             raise GateError('unsupported command')
     except Exception as error:
@@ -565,5 +660,6 @@ if __name__ == '__main__':
         if category not in {'GateError', 'KeyError', 'ValueError', 'OSError',
                             'TimeoutExpired', 'HTTPError', 'URLError', 'Error'}:
             category = 'RuntimeError'
-        print(f'functional_roundtrip=FAIL stage={STAGE} category={category}', file=sys.stderr)
+        detail = ' reason=' + browser_failure_reason(error) if STAGE in {'browser-preflight', 'browser-submit'} else ''
+        print(f'functional_roundtrip=FAIL stage={STAGE} category={category}{detail}', file=sys.stderr)
         sys.exit(1)

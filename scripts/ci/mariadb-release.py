@@ -81,9 +81,16 @@ def validate_parent(parent, image):
     require(all(image['Config'].get('Labels', {}).get(k) == v for k, v in parent[0]['Config'].get('Labels', {}).items()
                 if k not in wrapper_labels),
             'official parent labels changed')
-    parent_layers = parent[0].get('RootFS', {}).get('Layers')
-    if parent_layers is not None:
-        require(image.get('RootFS', {}).get('Layers', [])[:-1] == parent_layers, 'derivative parent layers changed')
+    require(isinstance(parent[0].get('RootFS'), dict) and isinstance(image.get('RootFS'), dict),
+            'missing parent or derivative rootfs')
+    parent_layers = parent[0]['RootFS'].get('Layers')
+    child_layers = image['RootFS'].get('Layers')
+    for layers in (parent_layers, child_layers):
+        require(isinstance(layers, list) and layers
+                and all(isinstance(layer, str) and re.fullmatch(r'sha256:[0-9a-f]{64}', layer) for layer in layers),
+                'missing or malformed rootfs layers')
+    require(len(child_layers) == len(parent_layers) + 1 and child_layers[:-1] == parent_layers,
+            'derivative must preserve parent layers and add exactly one gosu copy layer')
 
 
 def validate_candidate_image(images, sha):

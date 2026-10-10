@@ -49,8 +49,9 @@ class MariaDBTests(unittest.TestCase):
 
     def test_parent_runtime_configuration_is_preserved(self):
         parent = {'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'arm64',
-                  'RepoDigests': [gate.BASE], 'Config': {'Entrypoint': ['docker-entrypoint.sh'], 'Cmd': ['mariadbd'], 'Env': ['A=B'], 'Labels': {'org.opencontainers.image.version': '24.04', 'maintainer': 'official'}}}
+                  'RepoDigests': [gate.BASE], 'Config': {'Entrypoint': ['docker-entrypoint.sh'], 'Cmd': ['mariadbd'], 'Env': ['A=B'], 'Labels': {'org.opencontainers.image.version': '24.04', 'maintainer': 'official'}}, 'RootFS': {'Layers': ['sha256:' + 'b' * 64]}}
         child = copy.deepcopy(parent); child['Id'] = 'sha256:' + 'a' * 64
+        child['RootFS']['Layers'].append('sha256:' + 'c' * 64)
         child['Config']['Labels']['org.opencontainers.image.version'] = '11.4.13-noble-gosu1.19'
         gate.validate_parent([parent], child)
         broken = copy.deepcopy(child); broken['Config']['Labels']['maintainer'] = 'substituted'
@@ -60,6 +61,26 @@ class MariaDBTests(unittest.TestCase):
             with self.assertRaises(ValueError): gate.validate_parent([parent], broken)
         parent['RepoDigests'] = ['other@sha256:' + 'b' * 64]
         with self.assertRaises(ValueError): gate.validate_parent([parent], child)
+
+    def test_parent_and_child_require_complete_valid_single_copy_layer_chain(self):
+        parent = {'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'arm64',
+                  'RepoDigests': [gate.BASE], 'Config': {'Labels': {}},
+                  'RootFS': {'Layers': ['sha256:' + 'b' * 64]}}
+        child = copy.deepcopy(parent); child['RootFS']['Layers'].append('sha256:' + 'c' * 64)
+        gate.validate_parent([parent], child)
+        for target in ('parent', 'child'):
+            for bad in (None, {}, {'Layers': None}, {'Layers': []}, {'Layers': 'unknown'},
+                        {'Layers': ['unknown']}, {'Layers': [None]}, {'Layers': ['sha256:' + 'a' * 63]}):
+                p, c = copy.deepcopy(parent), copy.deepcopy(child)
+                (p if target == 'parent' else c)['RootFS'] = bad
+                with self.subTest(target=target, rootfs=bad), self.assertRaises(ValueError): gate.validate_parent([p], c)
+            p, c = copy.deepcopy(parent), copy.deepcopy(child)
+            del (p if target == 'parent' else c)['RootFS']
+            with self.subTest(target=target, rootfs='omitted'), self.assertRaises(ValueError): gate.validate_parent([p], c)
+        for layers in ([*parent['RootFS']['Layers']], ['sha256:' + 'd' * 64, 'sha256:' + 'c' * 64],
+                       [*child['RootFS']['Layers'], 'sha256:' + 'e' * 64]):
+            c = copy.deepcopy(child); c['RootFS']['Layers'] = layers
+            with self.subTest(layers=layers), self.assertRaises(ValueError): gate.validate_parent([parent], c)
 
     def test_temporary_initialization_server_is_not_final_daemon_readiness(self):
         status = 'Name: mariadbd\nUid: 999 999 999 999\n'

@@ -18,7 +18,10 @@ Go omits linker flags from build metadata when `-trimpath` is set; the ELF
 symbol table must remain present to reject `-s`, while the reviewed Dockerfile
 binds the exact linker flags. The main module may be `(devel)` because the source comes from an archive.
 Compiler, exact dependency identities, binary hash, source pin and gosu version
-remain mandatory. Stripping with `-s` is forbidden.
+remain mandatory. The Go 1.26 module directive compiled by Go 1.27.2 also
+requires the exact build setting
+`DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0`; omitted, changed
+or arbitrary compatibility defaults fail. Stripping with `-s` is forbidden.
 
 The independent installed inventory uses dpkg and `go version -m` on the actual
 final binary. It checks ELF64 ARM64 with no dynamic interpreter. Parent config,

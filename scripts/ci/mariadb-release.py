@@ -26,7 +26,8 @@ ARCHIVE = '33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b'
 MODULES = {'github.com/moby/sys/user': ['v0.4.1', 'h1:RgjRlaDKi/Xmyrz4t8lyzXT6v2ooFeO/7xtchmhVWE0='],
            'golang.org/x/sys': ['v0.49.0', 'h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=']}
 SETTINGS = {'-buildmode': 'exe', '-compiler': 'gc', '-trimpath': 'true', 'CGO_ENABLED': '0',
-            'GOARCH': 'arm64', 'GOOS': 'linux', 'GOARM64': 'v8.0'}
+            'GOARCH': 'arm64', 'GOOS': 'linux', 'GOARM64': 'v8.0',
+            'DefaultGODEBUG': 'tracebacklabels=0,x509sslcertoverrideplatform=0'}
 REGRESSION_CHECKS = ('mysql', 'numeric', 'groups', 'home', 'exec', 'failure', 'fresh_init', 'nonroot_restart', 'persistence')
 
 

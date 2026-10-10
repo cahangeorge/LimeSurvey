@@ -112,3 +112,22 @@ Rendered Compose validation rejects `network_mode`, requires an internal
 backend network, and restricts DB to that network alone. Mutations enabling
 host networking, public backend networking or DB egress all fail. These four
 regression cases failed before remediation and pass after it.
+
+## Installer and archive contract remediation
+
+The generated synthetic configuration uses upstream `DbConnection`, including
+LimeSurvey's `MysqlSchema` mappings for `autoincrement` and `composite_pk`.
+The generic Yii `CDbConnection` fails while creating the initial schema. An
+isolated local reproduction failed with the generic class and completed CLI
+installation, administrator creation and permissions with `DbConnection`.
+Both disposable app/database probes completed resource cleanup.
+
+The official source archive omits upstream `tests/`, so the gate embeds the
+exact 1,456-byte upstream question fixture from the pinned commit, with SHA-256
+`5e8cd08ced46c9a8991d2f98294234bf3b0690e0907798c1ed22fa7c4dd5091d`.
+It verifies that checksum before importing the synthetic question. The runtime
+image does not need test assets or an additional network download.
+
+These repairs retain the mandatory native ARM64 functional gate. Local Podman
+diagnostic probes do not replace its exact-source CI acceptance. This synthetic
+installation also does not prove production table engines or backup consistency.

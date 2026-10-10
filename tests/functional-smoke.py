@@ -20,6 +20,59 @@ import urllib.request
 import zipfile
 
 UPSTREAM = '6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9'
+# Pinned upstream tests/data/surveys/limesurvey_question_import_question_test_II.lsq
+# GitHub source archives exclude tests; retain the exact synthetic fixture here.
+QUESTION_FIXTURE = '''<?xml version="1.0" encoding="UTF-8"?>
+<document>
+ <LimeSurveyDocType>Question</LimeSurveyDocType>
+ <DBVersion>366</DBVersion>
+ <languages>
+  <language>en</language>
+ </languages>
+ <questions>
+  <fields>
+   <fieldname>qid</fieldname>
+   <fieldname>parent_qid</fieldname>
+   <fieldname>sid</fieldname>
+   <fieldname>gid</fieldname>
+   <fieldname>type</fieldname>
+   <fieldname>title</fieldname>
+   <fieldname>question</fieldname>
+   <fieldname>preg</fieldname>
+   <fieldname>help</fieldname>
+   <fieldname>other</fieldname>
+   <fieldname>mandatory</fieldname>
+   <fieldname>question_order</fieldname>
+   <fieldname>language</fieldname>
+   <fieldname>scale_id</fieldname>
+   <fieldname>same_default</fieldname>
+   <fieldname>relevance</fieldname>
+   <fieldname>modulename</fieldname>
+  </fields>
+  <rows>
+   <row>
+    <qid><![CDATA[26958]]></qid>
+    <parent_qid><![CDATA[0]]></parent_qid>
+    <sid><![CDATA[124268]]></sid>
+    <gid><![CDATA[1388]]></gid>
+    <type><![CDATA[T]]></type>
+    <title><![CDATA[G01Q02]]></title>
+    <question><![CDATA[Answer this second test question.]]></question>
+    <preg/>
+    <help/>
+    <other><![CDATA[N]]></other>
+    <mandatory><![CDATA[N]]></mandatory>
+    <question_order><![CDATA[1]]></question_order>
+    <language><![CDATA[en]]></language>
+    <scale_id><![CDATA[0]]></scale_id>
+    <same_default><![CDATA[0]]></same_default>
+    <relevance><![CDATA[1]]></relevance>
+   </row>
+  </rows>
+ </questions>
+</document>
+'''.encode()
+QUESTION_SHA256 = '5e8cd08ced46c9a8991d2f98294234bf3b0690e0907798c1ed22fa7c4dd5091d'
 CHROME_VERSION = '155.0.8059.39'
 CHROME_SHA256 = 'b9d44e5d183260ca941a4c4d8d21c8a437d81ef778a489047ef98968b0475dc5'
 REQUIREMENTS = '''playwright==1.63.0 --hash=sha256:354e15b29503565fc598b89f16fbe070459343bef9d7498a93e304864000c6a7
@@ -260,7 +313,7 @@ class Roundtrip:
                      'test ! -e application/config/config.php')
         STAGE = 'install'
         configuration = '''<?php return ['components'=>['db'=>[
-'class'=>'CDbConnection','connectionString'=>'mysql:host=db;port=3306;dbname='.getenv('DB_NAME'),
+'class'=>'DbConnection','connectionString'=>'mysql:host=db;port=3306;dbname='.getenv('DB_NAME'),
 'username'=>getenv('DB_USER'),'password'=>getenv('DB_PASSWORD'),'charset'=>'utf8mb4',
 'emulatePrepare'=>true,'tablePrefix'=>'lime_']], 'config'=>['RPCInterface'=>'json']];'''
         self.compose('exec', '-T', '--user', 'www-data', 'app', 'sh', '-eu', '-c',
@@ -283,8 +336,8 @@ class Roundtrip:
         require(type(sid) is int and sid > 0)
         gid = self.api('add_group', key, sid, 'Synthetic probe')
         require(type(gid) is int and gid > 0)
-        fixture = self.compose('exec', '-T', 'app', 'cat',
-            'tests/data/surveys/limesurvey_question_import_question_test_II.lsq')
+        fixture = QUESTION_FIXTURE
+        require(hashlib.sha256(fixture).hexdigest() == QUESTION_SHA256)
         question = self.api('import_question', key, sid, gid,
                             base64.b64encode(fixture).decode(), 'lsq', 'Y', 'SMOKE', 'Synthetic probe')
         require(type(question) is int and question > 0)

@@ -125,7 +125,8 @@ def verify(root, component, sha, run_id, attempt):
     signatures = cosign(["verify", *policy, ctx["image"]])
     claims = json_values(signatures)
     require(any(value.get("critical", {}).get("image", {}).get("docker-manifest-digest") == ctx["digest"]
-                and value.get("critical", {}).get("identity", {}).get("docker-reference") == ctx["repository"]
+                and value.get("critical", {}).get("identity", {}).get("docker-reference") == ctx["image"]
+                and value.get("critical", {}).get("type") == "https://sigstore.dev/cosign/sign/v1"
                 for value in claims), "signature digest mismatch")
     outputs["cosign-signature.json"] = signatures
     for kind, expected, cli_type, predicate_type in (

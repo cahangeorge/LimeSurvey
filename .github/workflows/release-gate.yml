@@ -40,6 +40,7 @@ jobs:
           sh -n tests/nginx-security-smoke.sh
           sh -n scripts/ci/install-security-tools.sh
           python3 -m unittest discover -s tests -p 'test_*gate.py'
+          python3 tests/functional-smoke.py self-test
 
       - name: Install locked test dependencies
         shell: bash
@@ -163,6 +164,13 @@ jobs:
             }
           '
 
+      - name: Install checksum-pinned functional browser tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/functional-smoke.py self-test
+          python3 tests/functional-smoke.py bootstrap "$RUNNER_TEMP/functional-tools"
+
       - name: Run the ARM64 Compose smoke test
         shell: bash
         env:
@@ -171,6 +179,27 @@ jobs:
         run: |
           set -euo pipefail
           ./tests/smoke.sh
+
+      - name: Require real public functional roundtrip on ARM64
+        shell: bash
+        env:
+          APP_IMAGE: limesurvey-app:arm64-release
+          FUNCTIONAL_SMOKE: '1'
+          FUNCTIONAL_PYTHON: ${{ runner.temp }}/functional-tools/venv/bin/python
+          FUNCTIONAL_CHROME: ${{ runner.temp }}/functional-tools/chrome-linux-arm64/chrome
+          FUNCTIONAL_EVIDENCE: ${{ runner.temp }}/functional-evidence
+        run: |
+          set -euo pipefail
+          ./tests/smoke.sh
+
+      - name: Preserve bounded synthetic functional evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: functional-roundtrip-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/functional-evidence/
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Build and scan the corrected Nginx companion natively
         shell: bash

@@ -2,9 +2,13 @@
 
 ## Bounded implementation plan
 
-Scope: exactly `tests/functional-smoke.py`, `tests/smoke.sh`, both PHP release
-workflows and this document. Keep ordinary smoke behavior unless the explicit
-`FUNCTIONAL_SMOKE=1` flag selects the isolated functional gate.
+This functional gate contributes five files to the combined nine-file CI/CD
+MVP slice: `tests/functional-smoke.py`, `tests/smoke.sh`, both PHP release
+workflows and this document. The three signing files and the canonical plan
+complete the reviewed scope recorded in
+[the implementation plan](../implementation-plan.md#cicd-mvp-extension-functional-gate-and-signed-release-artifacts).
+Keep ordinary smoke behavior unless the explicit `FUNCTIONAL_SMOKE=1` flag
+selects the isolated functional gate.
 
 1. Implement secret-safe JSON-RPC/CSV validation and adversarial self-tests.
 2. Create a unique task-owned Compose project, reject pre-existing resources,
@@ -74,7 +78,8 @@ per-field booleans; activation permits additional success metadata with
 `status=OK`. `CsvWriter` defaults to semicolon-delimited UTF-8 with BOM, and
 code headings preserve `id`, `submitdate`, `SMOKE`. The default submit template
 renders `Your survey responses have been recorded.`. The question fixture is
-read from that same built image, never a moving branch.
+embedded from that exact upstream commit and checksum-verified before import,
+never read from a moving branch or assumed to exist in the runtime archive.
 
 CI downloads Chrome for Testing `155.0.8059.39` for Linux ARM64 and verifies
 SHA-256 `b9d44e5d183260ca941a4c4d8d21c8a437d81ef778a489047ef98968b0475dc5`.

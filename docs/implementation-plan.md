@@ -541,7 +541,7 @@ Until then, no deployment is authorized; Formbricks remains unchanged.
 - [x] Every task has explicit acceptance criteria.
 - [x] Every task has verification steps.
 - [x] Dependencies are named and ordered.
-- [x] No repository task intentionally touches more than five files.
+- [x] Repository tasks default to five files; larger slices require an explicit reviewed scope, as recorded below.
 - [x] Checkpoints separate safety, build, deployment, migration, and deletion gates.
 - [x] High-risk backup, ARM64, email, privacy, and destructive-operation issues fail early.
 - [x] User has reviewed and approved this implementation plan.
@@ -551,3 +551,29 @@ Until then, no deployment is authorized; Formbricks remains unchanged.
 1. Select the secure off-server backup destination only if existing Coolify backup controls cannot safely export the Compose data.
 2. After Task 1, approve the exact list of active Formbricks surveys that must be recreated.
 3. At Checkpoint F, decide separately whether to permanently delete Formbricks and how long protected archives must remain.
+
+### CI/CD MVP extension: functional gate and signed release artifacts
+
+Plan reviewed on 2026-10-11 before protected integration. This bounded extension implements the user-approved CI/CD MVP in this existing wrapper project. The combined implementation scope explicitly permits the following nine files (the five-file default is replaced only for this reviewed slice):
+
+1. `scripts/ci/sign-release.py` — keyless image/provenance/SBOM signing and strict consumer verification.
+2. `tests/test_signing_gate.py` — actual Cosign v3 claim and adversarial verification contracts.
+3. `docs/delivery/artifact-signing.md` — signing/provenance identity and evidence contract.
+4. `tests/functional-smoke.py` — owned synthetic installer/API/public Chrome/export/restart gate and hosted sandbox bootstrap.
+5. `tests/smoke.sh` — explicit functional-gate entry point.
+6. `.github/workflows/release-gate.yml` — mandatory native ARM64 functional CI and early sandbox preflight.
+7. `.github/workflows/release.yml` — mandatory functional proof before publishing the tested PHP image.
+8. `docs/delivery/functional-smoke.md` — fixture, isolation, cleanup and browser acceptance documentation.
+9. `docs/implementation-plan.md` — this source-of-truth scope and ordered acceptance.
+
+Order and acceptance:
+- Independent source review and local targeted checks pass; required PR CI verifies the exact candidate source.
+- Disposable native ARM64 CI installs LimeSurvey, creates one survey, accepts one synthetic public Chrome response, verifies its completed export, restarts app/DB and verifies the same response/export. Receipt is written only after owned resource cleanup. Chrome runs sandboxed in an isolated temporary context.
+- Main remains protected with the mandatory aggregate gate. Merge the reviewed candidate normally, then require successful main CI for its exact merged commit.
+- Publish PHP once from the verified main source, requiring its own functional proof before registry push; scan the exact published digest and generate the release manifest and CycloneDX SBOM.
+- Sign and attest the digest through GitHub OIDC; strictly verify workflow identity, issuer, source commit, image digest, publisher run, provenance and SBOM. Unknown or changed evidence fails closed.
+- Publish the existing Nginx companion only after the PHP publisher succeeds, with equivalent exact-source scanning/signing/evidence requirements. Independently verify both registry artifacts using pinned Cosign.
+
+Verification uses helper self-tests, existing Python gate tests, actionlint, zizmor, redacted Gitleaks, native ARM64 CI artifacts, a synthetic completion screenshot and independent registry consumer checks. Static checks and local Podman diagnostics remain distinct from the native Docker acceptance.
+
+Production promotion requires separate successful staging, backup/restore, migration serialization, post-deploy smoke and rollback evidence. Known application/database security findings remain blocking under the existing security policy. Formbricks remains untouched during this CI/CD extension. No deployment, risk waiver or retirement is implied by a successful artifact publisher.

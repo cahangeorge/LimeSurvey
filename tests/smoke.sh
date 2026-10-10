@@ -1,6 +1,17 @@
 #!/bin/sh
 set -eu
 
+case "${FUNCTIONAL_SMOKE:-0}" in
+    0) ;;
+    1)
+        : "${FUNCTIONAL_PYTHON:?Select the pinned temporary Python environment}"
+        : "${FUNCTIONAL_CHROME:?Select official Chrome for Testing}"
+        : "${FUNCTIONAL_EVIDENCE:?Select task-owned synthetic evidence directory}"
+        exec "$FUNCTIONAL_PYTHON" "$(dirname "$0")/functional-smoke.py" run
+        ;;
+    *) echo 'Unsupported FUNCTIONAL_SMOKE value' >&2; exit 1 ;;
+esac
+
 project_name=${COMPOSE_PROJECT_NAME:-limesurvey-smoke}
 env_file=${ENV_FILE:-.env.example}
 keep_stack=${KEEP_SMOKE_STACK:-0}

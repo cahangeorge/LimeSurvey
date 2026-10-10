@@ -59,11 +59,29 @@ jobs:
           docker image inspect --format '{{.Id}}' "$RELEASE_TAG" > "$RUNNER_TEMP/tested-image-id"
           python3 scripts/ci/release-artifact.py inventory "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/inventory.json"
 
+      - name: Install checksum-pinned functional browser tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 tests/functional-smoke.py self-test
+          python3 tests/functional-smoke.py bootstrap "$RUNNER_TEMP/functional-tools"
+
       - name: Run disposable Compose runtime smoke on the built image
         shell: bash
         env:
           COMPOSE_PROJECT_NAME: limesurvey-release-artifact
           SMOKE_NO_BUILD: '1'
+        run: |
+          set -euo pipefail
+          APP_IMAGE="$RELEASE_TAG" ./tests/smoke.sh
+
+      - name: Require public functional roundtrip on exact publisher image
+        shell: bash
+        env:
+          FUNCTIONAL_SMOKE: '1'
+          FUNCTIONAL_PYTHON: ${{ runner.temp }}/functional-tools/venv/bin/python
+          FUNCTIONAL_CHROME: ${{ runner.temp }}/functional-tools/chrome-linux-arm64/chrome
+          FUNCTIONAL_EVIDENCE: ${{ runner.temp }}/release-evidence/functional
         run: |
           set -euo pipefail
           APP_IMAGE="$RELEASE_TAG" ./tests/smoke.sh

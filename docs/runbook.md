@@ -119,78 +119,78 @@ Record timestamps and pass/fail results, but not recipient addresses, message bo
 
 If delivery fails, inspect only the safe status/error text first. Verify the selected email method, plugin activation, sender-domain verification, and Coolify variable presence. Rotate the Resend key immediately if it was ever printed or pasted into an unsafe location.
 
-## 6. Backup
+## 6. Paired backup and isolated recovery
 
-Back up both MariaDB and the persistent application paths before upgrades, migrations, and cutover. Store an access-controlled copy outside the Coolify host and record SHA-256 checksums in the private operational evidence.
+The installed predecessor has schema 712 and MyISAM tables. Quiesce every
+writer, including app/nginx ingress and any background job, before dumping.
+Use `--lock-all-tables --quick --routines --events --triggers`; transaction-only
+dumps cannot establish MyISAM consistency. Keep the database alive, stop app
+and nginx, and retain the original volumes throughout recovery.
 
-Run the following only from a trusted shell inside the correct Compose project directory. The dump is created inside the database container and copied as a file so its contents do not pass through task logs:
+Use the finite `operate.py rehearse` / `promote` protocol documented in
+[staging delivery](delivery/staging.md). Its stable application UUID lock covers
+backup, off-host acknowledgement, restore, migration, proof and publication.
+Disable automatic Coolify deployment and prove no active/queued jobs before
+starting. Provider stop-before-hook behavior means `custom_start` cannot own
+this complete critical section; use controlled Compose with the existing UUID.
 
-```bash
-set -eu
-umask 077
-backup_root="${HOME}/limesurvey-backups/$(date -u +%Y%m%dT%H%M%SZ)"
-install -d -m 700 "$backup_root"
+The helper writes a private SQL dump and full application archive, including
+code, config/security, uploads, plugins, themes and runtime. It records table
+engines/counts, real configured prefix, permission semantics, original image
+IDs and regular-file hashes. Store the pair on a different access-controlled
+host and recompute both hashes there. An explicit acknowledgement binds that
+pair to the current transaction/state; a missing or mismatched acknowledgement
+keeps writers stopped. Do not stream dumps, config or logs into terminals.
 
-db_container="$(docker compose ps -q db)"
-app_container="$(docker compose ps -q app)"
-test -n "$db_container"
-test -n "$app_container"
+## 7. Restore, migration and rescue
 
-docker exec "$db_container" sh -eu -c '
-  umask 077
-  export MYSQL_PWD="$MARIADB_PASSWORD"
-  mariadb-dump --single-transaction --quick --skip-lock-tables \
-    --user="$MARIADB_USER" "$MARIADB_DATABASE" \
-    > /tmp/limesurvey-database.sql
-'
-docker cp "$db_container:/tmp/limesurvey-database.sql" "$backup_root/database.sql"
-docker exec "$db_container" rm -f /tmp/limesurvey-database.sql
+Prepare fresh owned isolated volumes from the exact admitted PHP image before
+starting the restore stack. Verify the actual DB image, volume and network
+identities before any SQL import or reset. Never attach candidate MariaDB to
+original database storage. Copy only installed `config.php`, byte-exact
+`security.php`, optional `allowed_hosts.php`, explicitly reviewed operator
+configuration/custom plugins/themes, and uploads onto the new defaults.
+Retain the complete old archive; do not overlay old core/defaults/cache/runtime
+onto the candidate. Selected symlinks or special files require separate review
+and block automatic restoration.
 
-docker exec "$app_container" sh -eu -c '
-  umask 077
-  tar -C /var/www/html -czf /tmp/limesurvey-application-volumes.tar.gz \
-    application/config upload plugins themes
-'
-docker cp "$app_container:/tmp/limesurvey-application-volumes.tar.gz" \
-  "$backup_root/application-volumes.tar.gz"
-docker exec "$app_container" rm -f /tmp/limesurvey-application-volumes.tar.gz
+Require exactly schema 712 before the one-off `updatedb` execution as www-data.
+Keep `YII_CONSOLE_COMMANDS` absent, capture DSN/SQL-bearing output in a 0600 log,
+and stop the recorded owned updater on timeout. Reject schema 717 no-op and
+newer/unknown versions as proof of migration. Verify schema 717 plus plugin
+backfill, permission tuple maxima/unique index, quota columns on all existing
+active `responses_<sid>` tables, savequotaexit defaults/inheritance, session
+column, default theme options and browser behavior. Localization/permission
+counts can change legitimately; preserve survey/user/response aggregates.
 
-chmod 600 "$backup_root/database.sql" "$backup_root/application-volumes.tar.gz"
-sha256sum "$backup_root/database.sql" "$backup_root/application-volumes.tar.gz" \
-  > "$backup_root/SHA256SUMS"
-chmod 600 "$backup_root/SHA256SUMS"
-```
+The rehearsal injects an invalid configuration only in the isolated copy,
+proves that it fails, restores the matched schema-712 DB/files pair, migrates
+that restored copy, and requires fresh admin/public/persistence proof. Original
+traffic can resume after the consistent backup and off-host verification while
+this isolated rehearsal continues. Promotion requires the completed hash-bound
+rehearsal and a new fresh paired backup under the same stable UUID lock.
 
-Copy the complete directory to approved encrypted or access-controlled off-host storage, recompute checksums at the destination, and compare them. A backup is not accepted until a disposable restore succeeds.
+Promotion preserves the selected application's private routes/environment and
+uses all three accepted immutable images without building. A generated private
+Nginx header fence returns 503 to ordinary requests, while exact `/healthz`
+remains a static anonymous health check. Only the controller's protected header
+allows HTTPS/admin/public/persistence validation. After acceptance, restore the
+canonical Nginx configuration and recreate only nginx; require another actual
+HTTPS health proof before unlocking. Ordinary request 503 must be independently
+verified before publication. Tokens never enter argv, logs or screenshots.
 
-## 7. Restore test and disaster restore
-
-Prefer a new isolated Compose project and empty volumes for a restore test. Never overwrite the only working production database to prove a backup.
-
-1. Verify `sha256sum -c SHA256SUMS` in the backup directory.
-2. Deploy the same Git commit and pinned images into an isolated project with fresh volumes.
-3. Start only `db`, wait for it to become healthy, then copy the dump into the container.
-4. Import from the file inside the container; do not stream SQL through the terminal or task log.
-5. Restore application volumes before starting `app` and `nginx`.
-6. Validate schema presence, aggregate counts, login, survey rendering, and one non-sensitive record.
-7. Destroy only the disposable restore project after recording the result.
-
-Database import pattern for the isolated project:
-
-```bash
-set -eu
-docker compose up -d db
-db_container="$(docker compose ps -q db)"
-test -n "$db_container"
-docker cp ./database.sql "$db_container:/tmp/limesurvey-database.sql"
-docker exec "$db_container" sh -eu -c '
-  export MYSQL_PWD="$MARIADB_ROOT_PASSWORD"
-  mariadb --user=root "$MARIADB_DATABASE" < /tmp/limesurvey-database.sql
-  rm -f /tmp/limesurvey-database.sql
-'
-```
-
-Restore the application archive only into fresh or deliberately selected volumes. Stop for explicit approval before replacing any production volume.
+A failed attempt stops candidate app/nginx and preserves data, receipts and
+logs. Verify `fence_stop_verified`; a false value requires immediate controlled
+writer fencing. Before publication, `legacy-rescue` can reattach the retained
+original images/volumes only after proving their matching schema-712 inventory
+and original file hashes. It requires functional acceptance and explicitly
+reports `LEGACY_INELIGIBLE`, since the old image is not security-admitted.
+After `public_unfenced=true`, legacy rescue is blocked: new writes may exist,
+so restoring an older pair needs a separately reviewed data-preservation plan.
+Never run the predecessor app against schema 717. No failed state or retained
+volume is deleted automatically. Record measured elapsed recovery/write windows;
+do not invent RPO/RTO guarantees. Mail remains UNKNOWN until approved recipient,
+provider acceptance and actual mailbox delivery are independently recorded.
 
 ## 8. Upgrade
 

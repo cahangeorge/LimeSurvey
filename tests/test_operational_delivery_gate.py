@@ -10,6 +10,8 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+import io
+import tarfile
 import types
 import unittest
 from unittest.mock import MagicMock, patch
@@ -533,6 +535,44 @@ class OperationalGateTests(unittest.TestCase):
                 self.assertEqual(receipt['export_sha256'], previous['export_sha256'])
                 self.assertNotIn('previous_before', receipt)
 
+    def test_candidate_database_resolves_real_classic_and_containerd_identity(self):
+        gate.save_private(self.value['state_file'], self.state)
+        db = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'db')
+        db['State']['Running'] = True
+        def transport(*args, **kwargs):
+            if args[0] == 'inspect': return json.dumps([db]).encode()
+            return self.docker(*args, **kwargs)
+        plan = {'_candidate': self.value}
+        for containerd in (False, True):
+            with self.subTest(containerd=containerd):
+                if containerd:
+                    target = self.target_images['mariadb']
+                    target['Id'] = self.value['images']['mariadb'].split('@')[1]
+                    target['Descriptor'] = {'digest': target['Id'], 'mediaType': self.registry_manifests['mariadb']['mediaType'],
+                                            'platform': {'os': 'linux', 'architecture': 'arm64'}}
+                    db['Image'] = target['Id']
+                with patch.object(gate, 'docker', side_effect=transport): gate.candidate_database(plan, db['Id'])
+        self.target_images['mariadb']['RootFS']['Layers'] = ['sha256:' + 'f' * 64]
+        with patch.object(gate, 'docker', side_effect=transport):
+            with self.assertRaises(gate.GateError): gate.candidate_database(plan, db['Id'])
+
+    def test_production_runtime_uses_real_signed_identity_for_all_three_images(self):
+        gate.save_private(self.value['state_file'], self.state)
+        for item in self.inspect: item['State']['Running'] = True
+        plan = {'_candidate': self.value, 'application_uuid': self.project,
+                '_legacy': {item['Config']['Labels']['com.docker.compose.service']: copy.deepcopy(item) for item in self.inspect}}
+        def transport(*args, **kwargs):
+            if args[:2] == ('network', 'inspect') and args[2] not in self.resources:
+                name = next(name for name, record in self.resources.items() if record['id'] == args[2])
+                return self.docker('network', 'inspect', name)
+            return self.docker(*args, **kwargs)
+        with patch.object(gate, 'docker', side_effect=transport):
+            proof = gate.production_runtime(plan, {}, fenced=False)
+        self.assertEqual(set(proof), {'app', 'db', 'nginx'})
+        self.target_images['php']['RootFS']['Layers'] = ['sha256:' + 'f' * 64]
+        with patch.object(gate, 'docker', side_effect=transport):
+            with self.assertRaises(gate.GateError): gate.production_runtime(plan, {}, fenced=False)
+
     def test_adapter_has_no_build_or_egress_and_explicit_external_resources(self):
         text = (ROOT / 'deploy/staging.compose.yaml').read_text()
         self.assertNotIn('build:', text); self.assertNotIn('egress', text)
@@ -540,7 +580,7 @@ class OperationalGateTests(unittest.TestCase):
         self.assertIn("127.0.0.1:${DELIVERY_PORT:?required}:80", text)
         self.assertEqual(text.count('external: true'), 9)
         self.assertEqual(text.count('image: ${DELIVERY_'), 3)
-        self.assertIn('source: ${DELIVERY_REPOSITORY_ROOT:?required}/docker/nginx/default.conf', text)
+        self.assertIn('source: ./docker/nginx/default.conf', text)
 
     def test_cli_secret_safe_failure(self):
         result = subprocess.run([sys.executable, str(ROOT / 'scripts/delivery/operate.py'), 'snapshot',
@@ -548,6 +588,278 @@ class OperationalGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1); self.assertEqual(result.stdout, '')
         self.assertIn('operational_delivery=HOLD', result.stderr)
         self.assertNotIn(str(self.root), result.stderr)
+
+
+class RecoveryGateTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory(); self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.plan = {'application_uuid': 'p' * 24, '_plan_sha256': 'b' * 64,
+                     'directory': str(self.root / 'transaction'), 'state_file': str(self.root / 'state.json'),
+                     'custom_plugins': ['Custom'], 'custom_themes': [], 'operator_config_files': []}
+        self.before = {'schema': 712, 'prefix': 'custom_', 'permissions': [[1, 'survey', 'read', 1, 0, 1, 0, 0, 0, 0]],
+                       'counts': {'custom_surveys': 1, 'custom_users': 1, 'custom_plugins': 2, 'custom_responses_7': 1},
+                       'active_response_tables': ['custom_responses_7']}
+
+    def test_lock_is_stable_across_receipts_and_excludes_concurrent_writer(self):
+        with patch.object(gate, 'LOCK_DIRECTORY', self.root):
+            with gate.production_lock(self.plan['application_uuid']):
+                with self.assertRaises(gate.GateError):
+                    with gate.production_lock(self.plan['application_uuid']): pass
+                with gate.production_lock('q' * 24): pass
+            with gate.production_lock(self.plan['application_uuid']): pass
+
+    def archive(self, members):
+        path = self.root / 'files.tar.gz'
+        with tarfile.open(path, 'w:gz') as archive:
+            for name, content in members.items():
+                raw = content.encode(); member = tarfile.TarInfo(name); member.size = len(raw)
+                archive.addfile(member, io.BytesIO(raw))
+        path.chmod(0o600); return path
+
+    def test_paired_archive_requires_security_and_rejects_traversal(self):
+        for entries in ({'application/config/config.php': 'config'},
+                        {'application/config/config.php': 'config', 'application/config/security.php': 'security', '../foreign': 'bad'}):
+            with self.subTest(entries=list(entries)):
+                with self.assertRaises(gate.GateError): gate.archive_inventory(self.archive(entries))
+        path = self.archive({'application/config/config.php': 'config', 'application/config/security.php': 'security',
+                             'upload/file': 'upload', 'plugins/Custom/file': 'custom', 'application/config/internal.php': 'old defaults'})
+        inventory = gate.archive_inventory(path); selected = gate.restore_paths(self.plan, inventory)
+        self.assertIn('upload/file', selected); self.assertIn('plugins/Custom/file', selected)
+        self.assertNotIn('application/config/internal.php', selected)
+
+    def test_missing_installed_encryption_keys_rejects_before_backup(self):
+        for metadata in ({'prefix': 'custom_', 'security': {'encryptionnonce': True, 'encryptionsecretboxkey': False}},
+                         {'prefix': 'bad;prefix', 'security': {'encryptionnonce': True, 'encryptionsecretboxkey': True}}):
+            with patch.object(gate, 'docker', return_value=json.dumps(metadata).encode()):
+                with self.assertRaises(gate.GateError): gate.config_metadata('synthetic-app')
+
+    def test_actual_response_table_name_is_in_inventory(self):
+        def query(identifier, sql):
+            if 'TABLE_NAME,TABLE_TYPE,ENGINE' in sql:
+                return ['custom_responses_7\tBASE TABLE\tMyISAM', 'custom_settings_global\tBASE TABLE\tMyISAM']
+            if 'information_schema.TRIGGERS' in sql: return ['0\t0\t0']
+            if 'stg_value' in sql: return ['712']
+            if 'JSON_ARRAY' in sql: return []
+            if 'SELECT sid' in sql: return ['7']
+            return ['1']
+        with patch.object(gate, 'database', side_effect=query):
+            self.assertEqual(gate.db_inventory('db', 'custom_')['active_response_tables'], ['custom_responses_7'])
+
+    def postcheck(self, missing_quota=False, missing_inheritance=False):
+        after = copy.deepcopy(self.before); after['schema'] = 717
+        calls = []
+        def query(identifier, sql):
+            calls.append(sql)
+            if 'quota_exit' in sql: return [] if missing_quota else ['int(11)\tYES']
+            if 'COLUMN_DEFAULT' in sql: return ["'N'"]
+            if 'session_token' in sql: return ['varchar(64)\tYES']
+            if 'STATISTICS' in sql: return ['entity_id\t0', 'entity\t0', 'permission\t0', 'uid\t0']
+            if 'information_schema.COLUMNS' in sql: return ['1']
+            if 'gsid <> 0' in sql and missing_inheritance: return ['1']
+            return ['0']
+        with patch.object(gate, 'db_inventory', return_value=after), patch.object(gate, 'database', side_effect=query):
+            result = gate.migration_postconditions('db', self.before)
+        return result, calls
+
+    def test_schema717_does_not_mask_missing_active_response_quota_column(self):
+        with self.assertRaises(gate.GateError): self.postcheck(missing_quota=True)
+        result, calls = self.postcheck()
+        self.assertEqual(result['schema'], 717)
+        self.assertTrue(any('custom_responses_7' in sql for sql in calls))
+
+    def test_global_group_zero_and_non_global_group_one_are_checked(self):
+        _, calls = self.postcheck()
+        self.assertTrue(any('gsid <> 0' in sql for sql in calls))
+        with self.assertRaises(gate.GateError): self.postcheck(missing_inheritance=True)
+
+    def test_newer_or_already_migrated_schema_never_runs_updater(self):
+        for schema in (717, 718, 0):
+            with patch.object(gate, 'candidate_database'), patch.object(gate, 'db_inventory', return_value={'schema': schema}), \
+                 patch.object(gate, 'compose') as command:
+                with self.assertRaises(gate.GateError):
+                    gate.migrate_candidate(self.plan, {'backup': {'inventory': self.before}}, 'db', self.root / 'compose')
+                command.assert_not_called()
+
+    def test_original_or_foreign_db_mount_rejects_before_any_restore_sql(self):
+        candidate = {'state_file': str(self.root / 'candidate.json'), 'project': 'candidate',
+                     'images': {'mariadb': 'bound-reference'}, 'volumes': {'db': 'fresh-owned-db'},
+                     'networks': {'backend': 'internal'}}
+        write(Path(candidate['state_file']), {'resources': {'internal': {'id': 'network-id'}}})
+        self.plan['_candidate'] = candidate
+        inspected = {'Id': 'db', 'Image': 'image-id', 'Config': {'Image': 'bound-reference',
+                     'Labels': {'com.docker.compose.project': 'candidate', 'com.docker.compose.service': 'db'}},
+                     'State': {'Running': True, 'Health': {'Status': 'healthy'}},
+                     'Mounts': [{'Type': 'volume', 'Name': 'original-production-db', 'Destination': '/var/lib/mysql', 'RW': True}]}
+        def docker(*args, **kwargs):
+            return json.dumps([{'Id': 'image-id'}] if args[0] == 'image' else [inspected]).encode()
+        with patch.object(gate, 'owned_resources'), patch.object(gate, 'image_identity'), \
+             patch.object(gate, 'docker', side_effect=docker), patch.object(gate, 'database') as sql:
+            with self.assertRaises(gate.GateError): gate.import_database('db', self.plan, {'sha256': {}}, reset=True)
+            sql.assert_not_called()
+
+    def test_publication_blocks_legacy_rescue_even_with_valid_old_backup(self):
+        with patch.object(gate, 'docker') as docker:
+            with self.assertRaises(gate.GateError): gate.legacy_rescue(self.plan, {'public_unfenced': True})
+            docker.assert_not_called()
+
+    def test_relative_adapter_bind_resolves_in_exact_candidate_repository(self):
+        repository = self.root / 'repository'; (repository / 'docker/nginx').mkdir(parents=True)
+        config = repository / 'docker/nginx/default.conf'; config.write_text('synthetic canonical nginx')
+        candidate = {'project': 'candidate', 'repository_root': str(repository), 'nginx_sha256': digest(config),
+                     '_manifest_sha256': 'a' * 64, 'images': {kind: 'signed-' + kind for kind in gate.REPOSITORIES},
+                     'port': 18481, 'volumes': {}, 'networks': {}}
+        self.plan.update(_candidate=candidate, _source={'services': {'db': {'environment': {
+            'MARIADB_DATABASE': 'synthetic', 'MARIADB_USER': 'synthetic',
+            'MARIADB_PASSWORD': 'synthetic-only-password', 'MARIADB_ROOT_PASSWORD': 'synthetic-only-root'}}}})
+        observed = []
+        def render(arguments, **kwargs):
+            observed.append(arguments)
+            directory = Path(arguments[arguments.index('--project-directory') + 1]) if '--project-directory' in arguments else ROOT / 'deploy'
+            return json.dumps({'name': candidate['project'], 'services': {
+                service: {'image': candidate['images'][kind], 'volumes': [{'type': 'bind', 'source': str(directory / 'docker/nginx/default.conf'),
+                          'target': '/etc/nginx/conf.d/default.conf', 'read_only': True}] if service == 'nginx' else []}
+                for service, kind in gate.IMAGES.items()}}).encode()
+        with patch.object(gate, 'command', side_effect=render): rendered = gate.selected_compose(self.plan, True)
+        self.assertEqual(rendered['services']['nginx']['volumes'][0]['source'], str(config))
+        args = observed[0]; self.assertEqual(args[args.index('--project-name') + 1], candidate['project'])
+        self.assertNotIn('synthetic-only-password', args); self.assertNotIn('synthetic-only-root', args)
+        bad = copy.deepcopy(rendered); bad['services']['nginx']['volumes'][0]['source'] = str(ROOT / 'deploy/docker/nginx/default.conf')
+        with patch.object(gate, 'command', return_value=json.dumps(bad).encode()):
+            with self.assertRaises(gate.GateError): gate.selected_compose(self.plan, True)
+
+    def test_promotion_requires_rehearsal_before_any_writer_mutation(self):
+        with patch.object(gate, 'docker') as docker:
+            with self.assertRaises(gate.GateError): gate.recovery_transaction(self.plan)
+            docker.assert_not_called(); self.assertFalse(Path(self.plan['directory']).exists())
+
+    def test_fence_keeps_health_static_and_token_private(self):
+        directory = Path(self.plan['directory']); directory.mkdir(mode=0o700)
+        repository = self.root / 'repository'; (repository / 'docker/nginx').mkdir(parents=True)
+        config = repository / 'docker/nginx/default.conf'
+        config.write_bytes((ROOT / 'docker/nginx/default.conf').read_bytes())
+        self.plan['_candidate'] = {'repository_root': str(repository), 'nginx_sha256': digest(config)}
+        controlled = {'services': {'nginx': {'volumes': [{'type': 'bind', 'source': str(config)}]}}}
+        state = {}
+        with patch.object(gate, 'selected_compose', return_value=controlled): result = gate.fenced_compose(self.plan, state)
+        fenced = Path(result['services']['nginx']['volumes'][0]['source']); content = fenced.read_text()
+        self.assertIn('"0:/healthz" 1', content); self.assertIn('return 503', content)
+        self.assertIn('~^1: 1', content)
+        token = gate.load_private(state['fence_token_file'])['token']
+        self.assertEqual(len(token), 64); self.assertIn(token, content)
+        self.assertNotIn(token, json.dumps(state)); self.assertEqual(fenced.stat().st_mode & 0o777, 0o600)
+
+    def backup_attempt(self, matching=True):
+        directory = Path(self.plan['directory']); directory.mkdir(mode=0o700)
+        archive = self.archive({'application/config/config.php': 'config', 'application/config/security.php': 'security'})
+        legacy = {service: {'Id': str(index) * 64, 'Image': 'sha256:' + str(index) * 64}
+                  for index, service in enumerate(('app', 'db', 'nginx'), 1)}
+        self.plan['_legacy'] = legacy; self.plan['ack_timeout'] = 30
+        commands = []; state = {'transaction_id': 'attempt'}
+        def docker(*args, **kwargs):
+            commands.append(args)
+            if args[0] == 'create': return b'a' * 64
+            if args[0] == 'inspect':
+                if len(args) == 3: return json.dumps([{'State': {'Running': False}}] * 2).encode()
+                return json.dumps([{'Id': 'a' * 64, 'Config': {'Labels': {gate.LABEL: self.plan['_plan_sha256']}}, 'State': {'ExitCode': 0}}]).encode()
+            if args[0] == 'cp':
+                target = Path(args[2]); target.write_bytes(archive.read_bytes() if target.suffix == '.gz' else b'synthetic SQL')
+            return b''
+        def ack(plan, current, kind):
+            return {'status': 'OFFHOST_HASH_VERIFIED', 'sha256': current['backup']['sha256'] if matching else {},
+                    'destination_host_id': 'd' * 64}
+        with patch.object(gate, 'legacy_state'), patch.object(gate, 'config_metadata', return_value={'prefix': 'custom_'}), \
+             patch.object(gate, 'db_inventory', return_value=self.before), patch.object(gate, 'docker', side_effect=docker), \
+             patch.object(gate, 'acknowledgement', side_effect=ack):
+            failure = None
+            try: gate.paired_backup(self.plan, state)
+            except gate.GateError as error: failure = error
+        return state, commands, failure
+
+    def test_myisam_backup_fences_writers_and_requires_matching_offhost_pair(self):
+        state, calls, failure = self.backup_attempt(matching=False)
+        self.assertIsNotNone(failure); self.assertTrue(state['writers_fenced'])
+        self.assertEqual(state['status'], 'BACKUP_READY')
+        stop = next(index for index, call in enumerate(calls) if call[0] == 'stop')
+        dump = next(index for index, call in enumerate(calls) if 'mariadb-dump' in str(call))
+        self.assertLess(stop, dump); self.assertIn('--lock-all-tables', str(calls[dump]))
+        self.assertNotIn('--single-transaction', str(calls[dump])); self.assertNotIn('--skip-lock-tables', str(calls[dump]))
+
+    def test_valid_paired_backup_has_private_files_and_offhost_proof(self):
+        state, _, failure = self.backup_attempt()
+        self.assertIsNone(failure); self.assertEqual(state['status'], 'OFFHOST_VERIFIED')
+        for name in ('database.sql', 'files.tar.gz'):
+            path = Path(self.plan['directory']) / name
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(digest(path), state['backup']['sha256'][name])
+
+    def test_migration_timeout_stops_only_recorded_owned_updater(self):
+        Path(self.plan['directory']).mkdir(mode=0o700)
+        self.plan['_candidate'] = {'project': 'candidate', 'images': {'php': 'signed-image'},
+                                   'volumes': {key: 'owned-' + key for key in set(gate.VOLUMES) - {'db'}}}
+        state = {'transaction_id': 'attempt', 'backup': {'inventory': self.before}}
+        name = '/candidate-migration-attempt'; calls = []
+        def docker(*args, **kwargs):
+            calls.append(args)
+            if args[0] == 'ps': return b''
+            if args[0] == 'wait': raise subprocess.TimeoutExpired('synthetic wait', 300)
+            if args[0] == 'inspect': return json.dumps([{'Id': 'a' * 64, 'Name': name,
+                'Config': {'Image': 'signed-image', 'Labels': {gate.LABEL: self.plan['_plan_sha256']}},
+                'State': {'Running': False}, 'Mounts': [{'Type': 'volume', 'Name': 'owned-' + key,
+                'Destination': target, 'RW': True} for key, target in gate.VOLUMES.items() if key != 'db']}]).encode()
+            return b''
+        with patch.object(gate, 'candidate_database'), patch.object(gate, 'db_inventory', return_value=self.before), \
+             patch.object(gate, 'compose'), patch.object(gate, 'project_container', return_value='a' * 64), \
+             patch.object(gate, 'load_private', return_value={'services': {'app': {}}, 'volumes': {}, 'networks': {}}), \
+             patch.object(gate, 'docker', side_effect=docker), \
+             patch.object(gate.subprocess, 'run'):
+            with self.assertRaises(subprocess.TimeoutExpired): gate.migrate_candidate(self.plan, state, 'db', 'compose')
+        self.assertIn(('stop', '-t', '10', 'a' * 64), calls)
+        self.assertEqual(state['migration_container'], 'a' * 64)
+        self.assertEqual((Path(self.plan['directory']) / 'migration.private.log').stat().st_mode & 0o777, 0o600)
+
+    def test_valid_production_transaction_requires_fenced_and_open_proofs(self):
+        candidate_path = self.root / 'candidate.json'; write(candidate_path, {'status': 'PREPARED'})
+        candidate = {'project': 'candidate', 'state_file': str(candidate_path), 'images': {'php': 'signed-php'}, 'configuration_commit': 'c' * 40}
+        self.plan.update(_candidate=candidate, rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64,
+                         candidate_manifest='candidate', candidate_manifest_sha256='b' * 64)
+        selected = {'application/config/security.php': 'security-hash'}
+        def backup(plan, state):
+            state['backup'] = {'inventory': self.before}; state['writers_fenced'] = True
+            return state['backup']
+        def ack(plan, state, kind):
+            common = {'admin': 'PASS', 'public': 'PASS', 'persistence': 'PASS', 'security_sha256': 'security-hash',
+                      'default_theme_options': 'PASS'}
+            if kind == 'restore-proof': return dict(common, status='RESTORE_FUNCTIONAL_PASS')
+            if kind == 'production-proof': return dict(common, status='PRODUCTION_CORE_PASS', https='PASS', ordinary_requests_fenced='PASS', images=candidate['images'])
+            self.assertEqual(kind, 'production-open-proof'); self.assertTrue(state['public_unfenced'])
+            return {'status': 'PUBLIC_HEALTH_PASS', 'https': 'PASS'}
+        with patch.object(gate, 'provider_gate'), patch.object(gate, 'manifest'), patch.object(gate, 'paired_backup', side_effect=backup), \
+             patch.object(gate, 'prepare'), patch.object(gate, 'selected_compose', return_value={}), \
+             patch.object(gate, 'fenced_compose', return_value={}), patch.object(gate, 'compose'), \
+             patch.object(gate, 'wait_db', return_value='db'), patch.object(gate, 'import_database'), \
+             patch.object(gate, 'restore_files', return_value=selected), patch.object(gate, 'migrate_candidate'), \
+             patch.object(gate, 'wait_runtime', return_value={'db': {'id': 'db'}}), patch.object(gate, 'wait_production', return_value={}), patch.object(gate, 'acknowledgement', side_effect=ack):
+            result = gate.recovery_transaction(self.plan)
+        self.assertEqual(result, {'status': 'PROMOTED_CORE_VERIFIED', 'mail_delivery': 'UNKNOWN'})
+        state = gate.load_private(self.plan['state_file'])
+        self.assertEqual(state['status'], 'PROMOTED_CORE_VERIFIED'); self.assertFalse(state['writers_fenced'])
+        self.assertTrue(state['public_unfenced']); self.assertIn('elapsed_seconds', state)
+
+    def test_failed_promotion_stops_candidate_and_preserves_state(self):
+        self.plan.update(rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64,
+                         _candidate={'project': 'candidate'})
+        def backup(plan, state):
+            state['writers_fenced'] = True
+            Path(plan['directory'], 'production.compose.private.json').write_text('{}')
+            raise gate.GateError('synthetic failed attempt')
+        with patch.object(gate, 'provider_gate'), patch.object(gate, 'paired_backup', side_effect=backup), \
+             patch.object(gate, 'compose') as command:
+            with self.assertRaises(gate.GateError): gate.recovery_transaction(self.plan)
+        self.assertEqual(command.call_args.args[2:], ('stop', 'app', 'nginx'))
+        state = gate.load_private(self.plan['state_file'])
+        self.assertEqual(state['status'], 'FAILED_PRESERVED'); self.assertTrue(state['fence_stop_verified'])
+        self.assertTrue(state['writers_fenced'])
 
 
 if __name__ == '__main__': unittest.main()

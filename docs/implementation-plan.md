@@ -707,3 +707,19 @@ Consistent paired recovery must quiesce all writers and use verified
 Retain byte-exact security/config files, any operator `allowed_hosts.php`, Demo
 and ResendEmail plugins, custom themes, uploads and writable runtime in the paired
 archive. Existing surveys/users remain preserved throughout operational work.
+
+
+Slice C source implements a stable existing-app UUID lock, MyISAM writer-fenced
+paired dump/full archive with a bounded off-host hash acknowledgement, exact
+owned isolated DB guards before import/reset, selective restored operator files
+and byte-identical encryption identity, and the supported one-off 712-to-717
+migration with owned timeout cancellation and physical/semantic postchecks.
+The rehearsal faults only copied configuration and restores/re-migrates the
+matched pair. Production requires that completed rehearsal and a fresh backup;
+a private Nginx header fence allows controlled HTTPS proof while ordinary
+requests receive 503. Canonical publication requires a second HTTPS gate.
+Failed candidate writers are stopped and preserved; legacy rescue is labeled
+security-ineligible and prohibited after potential public writes. Source tests
+prove these guards offline. Target backups, restore/browser evidence, measured
+recovery duration, production HTTPS and approved mail delivery remain separate
+runtime acceptance gates; no source-phase runtime PASS is asserted.

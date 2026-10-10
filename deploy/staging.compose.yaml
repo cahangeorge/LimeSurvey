@@ -1,135 +1,92 @@
-# Local staging candidate only; runtime provisioning and DB writes require separate authority.
+# One selected-triple adapter. Set validated values from operate.py prepare.
+name: ${DELIVERY_PROJECT:?validated project required}
 services:
   db:
-    image: docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39
+    image: ${DELIVERY_DB_IMAGE:?admitted digest required}
+    platform: linux/arm64
     restart: unless-stopped
     environment:
-      MARIADB_DATABASE: ${STAGING_DB_NAME:?Set DB_NAME}
-      MARIADB_USER: ${STAGING_DB_USER:?Set DB_USER}
-      MARIADB_PASSWORD: ${STAGING_DB_PASSWORD:?Set DB_PASSWORD}
-      MARIADB_ROOT_PASSWORD: ${STAGING_DB_ROOT_PASSWORD:?Set DB_ROOT_PASSWORD}
-    volumes:
-    - db-data:/var/lib/mysql
-    networks:
-    - backend
+      MARIADB_DATABASE: ${STAGING_DB_NAME:?required}
+      MARIADB_USER: ${STAGING_DB_USER:?required}
+      MARIADB_PASSWORD: ${STAGING_DB_PASSWORD:?required}
+      MARIADB_ROOT_PASSWORD: ${STAGING_DB_ROOT_PASSWORD:?required}
+    volumes: [db-data:/var/lib/mysql]
+    networks: [backend]
     healthcheck:
-      test:
-      - CMD
-      - healthcheck.sh
-      - --connect
-      - --innodb_initialized
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 30s
-    platform: linux/arm64
     cpus: '1.0'
     mem_limit: 1g
   app:
-    image: ghcr.io/cahangeorge/limesurvey@sha256:4193d1c9bef626c675381fe2bad07b400bcf5cce56e373c221babae2ce9d3510
+    image: ${DELIVERY_APP_IMAGE:?admitted digest required}
+    platform: linux/arm64
     restart: unless-stopped
     environment:
       DB_HOST: db
       DB_PORT: '3306'
-      DB_NAME: ${STAGING_DB_NAME:?Set DB_NAME}
-      DB_USER: ${STAGING_DB_USER:?Set DB_USER}
-      DB_PASSWORD: ${STAGING_DB_PASSWORD:?Set DB_PASSWORD}
-      RESEND_API_KEY: ${STAGING_RESEND_API_KEY:?Set RESEND_API_KEY}
-      RESEND_FROM_EMAIL: ${STAGING_RESEND_FROM_EMAIL:?Set RESEND_FROM_EMAIL}
-      RESEND_FROM_NAME: ${STAGING_RESEND_FROM_NAME:-}
+      DB_NAME: ${STAGING_DB_NAME:?required}
+      DB_USER: ${STAGING_DB_USER:?required}
+      DB_PASSWORD: ${STAGING_DB_PASSWORD:?required}
+      RESEND_API_KEY: ''
+      RESEND_FROM_EMAIL: probe@example.invalid
+      RESEND_FROM_NAME: Synthetic staging
     volumes:
-    - app-code-58de3e0-4193d1c9:/var/www/html
-    - app-config:/var/www/html/application/config
-    - app-upload:/var/www/html/upload
-    - app-plugins:/var/www/html/plugins
-    - app-themes:/var/www/html/themes
-    - app-runtime:/var/www/html/tmp
-    networks:
-    - backend
+      - app-code:/var/www/html
+      - app-config:/var/www/html/application/config
+      - app-upload:/var/www/html/upload
+      - app-plugins:/var/www/html/plugins
+      - app-themes:/var/www/html/themes
+      - app-runtime:/var/www/html/tmp
+    networks: [backend]
     depends_on:
-      db:
-        condition: service_healthy
+      db: {condition: service_healthy}
     healthcheck:
-      test:
-      - CMD-SHELL
-      - kill -0 1 && php-fpm -t
+      test: [CMD-SHELL, 'kill -0 1 && php-fpm -t']
       interval: 10s
       timeout: 5s
       retries: 6
       start_period: 20s
-    platform: linux/arm64
     cpus: '1.0'
     mem_limit: 512m
   nginx:
-    image: ghcr.io/cahangeorge/limesurvey-nginx@sha256:16699f0b601082faf0c60750a20128d024788f35675831afd80a9081493bb3d9
+    image: ${DELIVERY_NGINX_IMAGE:?admitted digest required}
+    platform: linux/arm64
     restart: unless-stopped
     read_only: true
     volumes:
-    - app-code-58de3e0-4193d1c9:/var/www/html:ro
-    - app-upload:/var/www/html/upload:ro
-    - app-plugins:/var/www/html/plugins:ro
-    - app-themes:/var/www/html/themes:ro
-    - app-runtime:/var/www/html/tmp:ro
-    tmpfs:
-    - /var/cache/nginx
-    - /var/run
-    expose:
-    - '80'
-    networks:
-    - frontend
-    - backend
+      - type: bind
+        source: ${DELIVERY_REPOSITORY_ROOT:?required}/docker/nginx/default.conf
+        target: /etc/nginx/conf.d/default.conf
+        read_only: true
+      - app-code:/var/www/html:ro
+      - app-upload:/var/www/html/upload:ro
+      - app-plugins:/var/www/html/plugins:ro
+      - app-themes:/var/www/html/themes:ro
+      - app-runtime:/var/www/html/tmp:ro
+    tmpfs: [/var/cache/nginx, /var/run]
+    ports: ['127.0.0.1:${DELIVERY_PORT:?required}:80']
+    networks: [frontend, backend]
     depends_on:
-      app:
-        condition: service_healthy
+      app: {condition: service_healthy}
     healthcheck:
-      test:
-      - CMD
-      - wget
-      - --quiet
-      - --spider
-      - http://127.0.0.1/healthz
+      test: [CMD, wget, --quiet, --spider, http://127.0.0.1/healthz]
       interval: 10s
       timeout: 5s
       retries: 6
       start_period: 10s
-    platform: linux/arm64
     cpus: '0.25'
     mem_limit: 128m
-    configs:
-    - source: nginx-default
-      target: /etc/nginx/conf.d/default.conf
 volumes:
-  db-data: null
-  app-config: null
-  app-upload: null
-  app-plugins: null
-  app-themes: null
-  app-runtime: null
-  app-code-58de3e0-4193d1c9: null
+  db-data: {external: true, name: '${DELIVERY_DB_VOLUME:?required}'}
+  app-code: {external: true, name: '${DELIVERY_CODE_VOLUME:?required}'}
+  app-config: {external: true, name: '${DELIVERY_CONFIG_VOLUME:?required}'}
+  app-upload: {external: true, name: '${DELIVERY_UPLOAD_VOLUME:?required}'}
+  app-plugins: {external: true, name: '${DELIVERY_PLUGINS_VOLUME:?required}'}
+  app-themes: {external: true, name: '${DELIVERY_THEMES_VOLUME:?required}'}
+  app-runtime: {external: true, name: '${DELIVERY_RUNTIME_VOLUME:?required}'}
 networks:
-  frontend:
-    internal: true
-  backend:
-    internal: true
-name: limesurvey-ci-staging
-x-readiness: 'HOLD: local configuration only; runtime/DB initialization/route and target adapter pending'
-configs:
-  nginx-default:
-    content: "map $$http_x_forwarded_proto $$fastcgi_https {\n    default off;\n \
-      \   https on;\n}\n\nserver {\n    listen 80;\n    server_name _;\n    server_tokens\
-      \ off;\n\n    root /var/www/html;\n    index index.php;\n    client_max_body_size\
-      \ 100m;\n\n    location = /healthz {\n        access_log off;\n        add_header\
-      \ Content-Type text/plain;\n        return 200 \"ok\\n\";\n    }\n\n    location\
-      \ ~ /\\. {\n        deny all;\n    }\n\n    location ~* ^/(?:application/(?:config|runtime)|docs|tests|vendor)(?:/|$$)\
-      \ {\n        deny all;\n    }\n\n    location ~* ^/tmp/runtime(?:/|$$) {\n \
-      \       deny all;\n    }\n\n    location ~ ^/upload/surveys/[0-9]+/files/fu_[^/]*$$\
-      \ {\n        deny all;\n    }\n\n    location = /editor/ {\n        index index.html;\n\
-      \    }\n\n    location / {\n        try_files $$uri $$uri/ /index.php?$$query_string;\n\
-      \    }\n\n    location ~ ^/index\\.php(?:/|$$) {\n        fastcgi_split_path_info\
-      \ ^(.+?\\.php)(/.*)$$;\n        include fastcgi_params;\n        fastcgi_param\
-      \ SCRIPT_FILENAME /var/www/html/index.php;\n        fastcgi_param SCRIPT_NAME\
-      \ /index.php;\n        fastcgi_param PATH_INFO $$fastcgi_path_info;\n      \
-      \  fastcgi_param HTTP_PROXY \"\";\n        fastcgi_param HTTP_X_FORWARDED_PROTO\
-      \ $$http_x_forwarded_proto;\n        fastcgi_param HTTPS $$fastcgi_https;\n\
-      \        fastcgi_pass app:9000;\n        fastcgi_read_timeout 120s;\n    }\n\
-      \n    location ~ \\.php(?:/|$$) {\n        return 404;\n    }\n}\n"
+  backend: {external: true, name: '${DELIVERY_BACKEND_NETWORK:?required}'}
+  frontend: {external: true, name: '${DELIVERY_FRONTEND_NETWORK:?required}'}

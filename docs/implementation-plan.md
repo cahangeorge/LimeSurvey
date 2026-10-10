@@ -11,7 +11,7 @@ The implementation is intentionally split into bounded phases. The first impleme
 ## Architecture decisions
 
 1. **Parallel replacement, not in-place mutation.** LimeSurvey receives a separate Coolify application, database, volumes, and `survey.omnestack.com` hostname. Formbricks remains untouched until acceptance checks pass.
-2. **Immutable upstream source.** The runtime is pinned to LimeSurvey tag `7.1.1+260914` and commit `6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`; moving branches and `latest` image tags are forbidden.
+2. **Immutable upstream source.** The current maintenance candidate is pinned to LimeSurvey tag `7.5.0+261001` and commit `c5a2ac817396220e054efc3fd26b84cafb92b36f`; moving branches and `latest` image tags are forbidden. The original 7.1.1 checkpoint below remains historical evidence.
 3. **Deployment wrapper repository.** `cahangeorge/LimeSurvey` owns only deployment files, the Resend plugin, tests, and runbooks. It does not rewrite vendored upstream application code unless a verified blocker makes a minimal patch unavoidable.
 4. **Three-service runtime.** Nginx serves/proxies the application, PHP 8.3 FPM runs LimeSurvey, and MariaDB 11.4 LTS stores application data. Persistent named volumes cover database data and LimeSurvey writable/custom paths.
 5. **HTTPS email transport.** A focused LimeSurvey email plugin handles `beforeEmailDispatch`, sends through Resend's HTTPS API, uses finite timeouts, and never logs credentials or authorization headers.
@@ -277,6 +277,9 @@ successfully. Production activation remains an explicit post-install runbook ste
 **Estimated scope:** Small, 2 files.
 
 ### Checkpoint C: Repository release candidate
+
+This is the historical 7.1.1 checkpoint. The current security-maintenance and
+CI/CD acceptance gates below govern any new release or deployment.
 
 **Status: RELEASE CANDIDATE VERIFIED; IMMUTABLE TAG REQUIRED.** Commit `4711f46`
 remediates the Nginx direct-access and tracked-secret scan findings. GitHub Actions

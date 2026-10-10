@@ -44,8 +44,10 @@ Create a new Docker Compose application from this repository. Do not alter the e
 Use:
 
 - repository: `cahangeorge/LimeSurvey`
-- revision: immutable release tag `v7.1.1-260914-omnestack.1`
-- Compose file: `/compose.yaml`
+- revision: exact integrated source commit from the accepted release manifest
+- images: accepted PHP, Nginx and MariaDB `repository@sha256:...` identities
+- Compose file: reviewed digest-only operational adapter recorded in the staging
+  receipt; its path is pending, so deployment remains on HOLD
 - public service: `nginx`
 - container port: `80`
 - production hostname: `survey.omnestack.com`
@@ -62,12 +64,18 @@ Create these Coolify variables and mark every credential as secret:
 | `RESEND_FROM_EMAIL` | yes | Sender on a Resend-verified domain |
 | `RESEND_FROM_NAME` | optional | Human-readable sender name |
 
-Do not set `APP_IMAGE` unless deploying a separately built immutable image. The Compose database has no published host port by design.
+Use the reviewed digest-only deployment adapter with all three accepted image
+references and no build definitions. Root `compose.yaml` remains a development
+build recipe; its DB/Nginx defaults are not a production release bundle. Keep
+deployment on HOLD until the adapter and selected triple pass staging. The
+database has no published host port by design.
 
-Deploy beside Formbricks. Confirm the native ARM64 build completes and all three services become healthy before adding migration traffic.
+Deploy beside Formbricks using the already-tested native ARM64 image digests.
+Do not rebuild during promotion. Confirm all three services become healthy and
+complete application smoke before adding migration traffic.
 
-Before deployment, verify that the release tag resolves to the reviewed commit recorded in the
-release evidence. Do not configure Coolify to follow mutable `main` or enable automatic deployment
+Before deployment, verify image signatures/provenance and that source, digests,
+configuration and staging receipts match the accepted release manifest. Do not configure Coolify to follow mutable `main` or enable automatic deployment
 from later pushes.
 
 ## 3. Initialize LimeSurvey
@@ -193,6 +201,26 @@ Restore the application archive only into fresh or deliberately selected volumes
 5. Deploy in a maintenance window, verify database migrations, browser behavior, plugin availability, persistence, and a Resend test delivery.
 6. Retain the previous Git revision, image, database dump, and application-volume archive until the rollback window closes.
 
+For the current `7.5.0+261001` candidate, the source archive checksum is
+`88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493` and the
+required schema is 717. A fresh `app-code-v7-5-0` volume is necessary: a populated
+old full-code volume hides image updates. Operational code volumes must identify
+the accepted app digest. Config/uploads/custom plugin/theme state stays separate;
+review any old upstream plugin/theme files that persistent mounts would mask.
+Preserve custom content and backup before changing it.
+
+The supported schema 712 → 717 command is `updatedb` in the pinned console
+entrypoint. It has no dry-run, writes DSN/SQL-bearing output, and does not
+activate hard maintenance automatically for this range. Execute only through
+the reviewed private operational helper after write quiescence, off-host backup
+and isolated restore proof. One deployment lock must cover backup, migration,
+health and rollback; its built-in runtime-file lock alone does not coordinate
+separate containers or manual deployment. Reject a newer installed schema before
+execution; return code zero and `DBVersion=717` alone do not prove all columns,
+indexes, theme defaults and semantic data updates succeeded. Verify them explicitly.
+An initial empty installation has no upgrade migration; record it as not applicable.
+The source-maintenance phase does not run this command against existing data.
+
 Never change a pinned value to `latest`, `master`, or another moving reference.
 
 ## 9. Rollback and cutover boundaries
@@ -202,7 +230,7 @@ Before a database migration, decide whether the old application can read the mig
 For an application-only failure before any schema/data change:
 
 1. Remove traffic from the failed LimeSurvey route.
-2. Redeploy the last verified Git revision and immutable image.
+2. Redeploy the previous accepted image digests and matching code/configuration.
 3. Verify health, login, persistence, and email behavior before restoring traffic.
 
 For a schema, data, or volume failure:

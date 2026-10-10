@@ -72,7 +72,7 @@ or production readiness, backups, cutover or authority to deploy.
 ## Pinned reference behavior
 
 The recipe follows immutable upstream revision
-`6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`: RemoteControl
+`c5a2ac817396220e054efc3fd26b84cafb92b36f`: RemoteControl
 `import_question` returns a positive integer; `set_survey_properties` returns
 per-field booleans; activation permits additional success metadata with
 `status=OK`. `CsvWriter` defaults to semicolon-delimited UTF-8 with BOM, and
@@ -136,6 +136,15 @@ image does not need test assets or an additional network download.
 These repairs retain the mandatory native ARM64 functional gate. Local Podman
 diagnostic probes do not replace its exact-source CI acceptance. This synthetic
 installation also does not prove production table engines or backup consistency.
+
+## Pinned 7.5 maintenance candidate
+
+The fixture bytes and used CLI/RemoteControl return contracts were reviewed
+against both immutable upstream commits and remain compatible. The current
+source pin is 7.5.0+261001; earlier local/runtime evidence above belongs to the
+prior implementation checkpoint. New exact-source native 7.5 installer/public
+Chrome/export/restart/cleanup proof remains required. An empty installation does
+not establish migration of an existing schema 712 database to 717.
 
 ## Hosted Chrome sandbox preflight
 

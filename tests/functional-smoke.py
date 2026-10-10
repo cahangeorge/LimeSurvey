@@ -19,7 +19,7 @@ import unittest
 import urllib.request
 import zipfile
 
-UPSTREAM = '6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9'
+UPSTREAM = 'c5a2ac817396220e054efc3fd26b84cafb92b36f'
 # Pinned upstream tests/data/surveys/limesurvey_question_import_question_test_II.lsq
 # GitHub source archives exclude tests; retain the exact synthetic fixture here.
 QUESTION_FIXTURE = '''<?xml version="1.0" encoding="UTF-8"?>

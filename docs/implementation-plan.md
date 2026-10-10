@@ -11,7 +11,7 @@ The implementation is intentionally split into bounded phases. The first impleme
 ## Architecture decisions
 
 1. **Parallel replacement, not in-place mutation.** LimeSurvey receives a separate Coolify application, database, volumes, and `survey.omnestack.com` hostname. Formbricks remains untouched until acceptance checks pass.
-2. **Immutable upstream source.** The runtime is pinned to LimeSurvey tag `7.1.1+260914` and commit `6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`; moving branches and `latest` image tags are forbidden.
+2. **Immutable upstream source.** The current maintenance candidate is pinned to LimeSurvey tag `7.5.0+261001` and commit `c5a2ac817396220e054efc3fd26b84cafb92b36f`; moving branches and `latest` image tags are forbidden. The original 7.1.1 checkpoint below remains historical evidence.
 3. **Deployment wrapper repository.** `cahangeorge/LimeSurvey` owns only deployment files, the Resend plugin, tests, and runbooks. It does not rewrite vendored upstream application code unless a verified blocker makes a minimal patch unavoidable.
 4. **Three-service runtime.** Nginx serves/proxies the application, PHP 8.3 FPM runs LimeSurvey, and MariaDB 11.4 LTS stores application data. Persistent named volumes cover database data and LimeSurvey writable/custom paths.
 5. **HTTPS email transport.** A focused LimeSurvey email plugin handles `beforeEmailDispatch`, sends through Resend's HTTPS API, uses finite timeouts, and never logs credentials or authorization headers.
@@ -277,6 +277,9 @@ successfully. Production activation remains an explicit post-install runbook ste
 **Estimated scope:** Small, 2 files.
 
 ### Checkpoint C: Repository release candidate
+
+This is the historical 7.1.1 checkpoint. The current security-maintenance and
+CI/CD acceptance gates below govern any new release or deployment.
 
 **Status: RELEASE CANDIDATE VERIFIED; IMMUTABLE TAG REQUIRED.** Commit `4711f46`
 remediates the Nginx direct-access and tracked-secret scan findings. GitHub Actions
@@ -577,3 +580,89 @@ Order and acceptance:
 Verification uses helper self-tests, existing Python gate tests, actionlint, zizmor, redacted Gitleaks, native ARM64 CI artifacts, a synthetic completion screenshot and independent registry consumer checks. Static checks and local Podman diagnostics remain distinct from the native Docker acceptance.
 
 Production promotion requires separate successful staging, backup/restore, migration serialization, post-deploy smoke and rollback evidence. Known application/database security findings remain blocking under the existing security policy. Formbricks remains untouched during this CI/CD extension. No deployment, risk waiver or retirement is implied by a successful artifact publisher.
+
+### CI/CD MVP security maintenance: pinned upstream and MariaDB derivative
+
+Reviewed on 2026-10-11 before implementation. The user-authorized next bounded
+phase combines the application and database repairs into one protected source
+candidate. This explicitly reviewed scope permits exactly these eighteen files;
+the five-file default remains applicable to other tasks:
+
+1. `docker/php/Dockerfile`
+2. `scripts/ci/release-artifact.py`
+3. `tests/functional-smoke.py`
+4. `compose.yaml`
+5. `AGENTS.md`
+6. `README.md`
+7. `docs/spec.md`
+8. `docs/implementation-plan.md`
+9. `docs/runbook.md`
+10. `docs/delivery/functional-smoke.md`
+11. `docker/mariadb/Dockerfile`
+12. `scripts/ci/mariadb-release.py`
+13. `tests/test_mariadb_release_gate.py`
+14. `.github/workflows/mariadb-release.yml`
+15. `scripts/ci/sign-release.py`
+16. `tests/test_signing_gate.py`
+17. `.github/workflows/release-gate.yml`
+18. `docs/delivery/mariadb.md`
+
+The leader owns files 1–10 and final integration/acceptance. A native Codex
+implementer may own files 11–18 in a separate worktree. Each worktree has one
+writer; neither writer overwrites the other's files. Final source review and
+independent leader verification remain mandatory.
+
+The application moves to official `7.5.0+261001`, immutable commit
+`c5a2ac817396220e054efc3fd26b84cafb92b36f`, archive SHA-256
+`88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493`.
+[Official pinned release notes](https://github.com/LimeSurvey/LimeSurvey/blob/c5a2ac817396220e054efc3fd26b84cafb92b36f/docs/release_notes.txt)
+record eleven application security fixes after the prior 7.1.1 pin. OS/Composer
+CVE inventory does not cover these application issues. Update the version/code
+volume identity, retain the exact checksum-verified question fixture, and require
+real native 7.5 installer/public Chrome/export/restart/cleanup acceptance.
+PHP 8.3.35 and its already-reviewed immutable base remain unchanged.
+
+The database derivative replaces only `/usr/local/bin/gosu` in the official
+MariaDB 11.4.13 Noble ARM64 image at
+`sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39`.
+Keep its entrypoint and runtime configuration. Rebuild unchanged gosu 1.19 source
+`6456aaa0f3c854d199d0f037f068eb97515b7513` using Go 1.27.2, pinned
+`moby/sys/user v0.4.1` and `golang.org/x/sys v0.49.0` module checksums.
+Use the reviewed builder digest and source archive checksum; `GOTOOLCHAIN=local`,
+`CGO_ENABLED=0`, `-trimpath`, `-ldflags '-d -w'`, `-buildvcs=false`, and
+`-mod=readonly` retain inspectable static binary metadata. Do not add `-s`.
+An archive-built main-module `(devel)` value must still bind the exact source,
+gosu version and binary hash; compiler and dependency identities remain strict.
+
+Order and acceptance:
+- Implement the scoped immutable pin/derivative changes and meaningful adversarial
+  validators/tests. Independent source review and targeted local checks pass.
+- Mandatory aggregate CI includes a separate bounded native ARM64 database job;
+  failed, skipped or cancelled database proof blocks it. Prove privilege switching,
+  official root initialization, non-root restart/persistence and owned cleanup.
+- Preserve fresh raw scans. Exact installed OS and Go/compiler inventories and
+  CycloneDX SBOM coverage must agree with the tested derivative identity. Reject
+  HIGH, CRITICAL, UNKNOWN, missing severity or missing coverage without ignore,
+  VEX masking, `ignore-unfixed` or a renewed historical staging exception.
+- Require exact candidate PR CI, normal protected merge, and exact merged main CI.
+  Publish PHP and MariaDB once each through their main-only normal workflows;
+  publish an exact-source Nginx companion only after PHP acceptance. Each publisher
+  scans its exact final digest, emits bound evidence, signs/attests via OIDC and
+  verifies image/provenance/SBOM identities. Independently verify registry consumers.
+
+This phase accepts source and individual artifacts. Existing frozen staging
+adapters/old component pins retain their historical checkpoint; do not weaken
+identities to accept a 7.5 bundle. The development Compose DB default is separate
+from the operational three-image digest selection. Individual publisher success
+and a companion smoke using historical FPM do not prove the chosen new triple.
+Actual selected Netcup ARM64 Coolify staging, isolated backup/off-host restore,
+serialized migrations, same-digest promotion, post-deploy smoke and rollback
+remain subsequent operational gates. OCI and Formbricks retirement are excluded.
+
+The supported 7.1.1-to-7.5 upgrade is schema 712 → 717. `updatedb` has no dry-run,
+does not automatically enable hard maintenance for this range, and can return
+success for a newer schema. Enforce a downgrade fence and write quiescence before
+one serialized migration; capture its DSN/SQL-bearing output privately. Verify
+actual columns/indexes and behavior beyond the schema version. Unknown backwards
+compatibility requires paired pre-change DB/files recovery, not an app-only
+rollback. No existing database migration or deployment occurs in this source phase.

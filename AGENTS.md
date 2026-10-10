@@ -11,8 +11,8 @@ Read these files and run `git status --short --branch` before making changes.
 
 ## Architecture and versions
 
-- Upstream LimeSurvey tag: `7.1.1+260914`
-- Upstream commit: `6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`
+- Upstream LimeSurvey tag: `7.5.0+261001`
+- Upstream commit: `c5a2ac817396220e054efc3fd26b84cafb92b36f`
 - Runtime: Nginx, PHP 8.3 FPM, MariaDB 11.4 LTS
 - Target platform: Docker Compose on ARM64 Coolify
 - Email: Resend HTTPS API through a LimeSurvey plugin; do not depend on SMTP ports 465/587

@@ -4,23 +4,26 @@ Deployment wrapper for running [LimeSurvey Community Edition](https://github.com
 
 ## Status
 
-The pinned runtime and Resend plugin are implemented. GitHub Actions run
-[35373999986](https://github.com/cahangeorge/LimeSurvey/actions/runs/35373999986)
-passed on commit `4711f46` with a native `aarch64` build, required PHP module
-checks, 10 tests/56 assertions, the Compose smoke test including the Nginx
-direct-access regressions, and the tracked-secret scan. Independent re-review
-found no unresolved high or critical issue. This verified release candidate is
-reserved for immutable wrapper tag `v7.1.1-260914-omnestack.1`; Phase 4 may start
-only after that remote tag resolves to the verified revision. No Coolify deploy
-has occurred, and Formbricks remains online and unchanged. See
-[`docs/implementation-plan.md`](docs/implementation-plan.md) for the gated
-rollout. Operational inventories and backup evidence are kept outside this
-public repository.
+The functional and signed-artifact pipeline passed on integrated source
+`34d187f542e013ecfad5fca3023c62423898ad7d`:
+[PHP publisher](https://github.com/cahangeorge/LimeSurvey/actions/runs/38087140326)
+and [Nginx publisher](https://github.com/cahangeorge/LimeSurvey/actions/runs/38087586359).
+Exact native CI, public Chrome survey/export/restart proof, digest scans,
+CycloneDX SBOM, keyless signatures and independent provenance verification
+passed for those prior artifacts.
+
+The current candidate updates LimeSurvey to the pinned 7.5 release below and
+adds a strict MariaDB/gosu derivative. Its native runtime, fresh security scans
+and signed artifacts require new exact-source acceptance; previous success is
+not proof for this candidate. Production remains blocked until those checks,
+real three-image staging, backup/restore, serialized migration and rollback pass.
+See [`docs/implementation-plan.md`](docs/implementation-plan.md). Formbricks
+remains independent; operational evidence and secrets stay outside this public repo.
 
 ## Pinned upstream
 
-- Release tag: `7.1.1+260914`
-- Commit: `6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`
+- Release tag: `7.5.0+261001`
+- Commit: `c5a2ac817396220e054efc3fd26b84cafb92b36f`
 - License: GPL-2.0-or-later
 
 This repository contains deployment configuration, tests, runbooks, and a Resend HTTPS email plugin. It does not track LimeSurvey's moving `master` branch and should not carry a modified vendor tree.

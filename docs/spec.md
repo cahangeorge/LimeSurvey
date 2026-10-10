@@ -16,14 +16,20 @@ The replacement must:
 
 ## Assumptions for approval
 1. Deploy LimeSurvey as a separate Compose application alongside Formbricks first, not as an in-place replacement.
-2. Pin the official LimeSurvey Git tag `7.1.1+260914` (commit `6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9`) rather than following `master`.
+2. Pin the official LimeSurvey Git tag `7.5.0+261001` (commit `c5a2ac817396220e054efc3fd26b84cafb92b36f`) rather than following `master`.
 3. Maintain a small deployment fork/wrapper repository named `cahangeorge/LimeSurvey` containing the Compose/Docker deployment and a Resend HTTPS email plugin; upstream LimeSurvey has no production Dockerfile or Compose definition.
 4. Use `survey.omnestack.com` as the canonical LimeSurvey hostname, then redirect or preserve `feedback.omnestack.com` for compatibility after cutover.
 5. Archive Formbricks surveys/responses and keep a restorable backup for 7 days after cutover. Do not claim automatic survey migration: Formbricks and LimeSurvey use different survey schemas, so survey recreation/import mapping is a separate verified step.
 6. LimeSurvey takes priority now; Stalwart remains queued for a later phase and is not a dependency of this deployment.
 
+The original 7.1.1 pin is superseded by the reviewed 2026-10-11 maintenance
+candidate above. The [pinned official release notes](https://github.com/LimeSurvey/LimeSurvey/blob/c5a2ac817396220e054efc3fd26b84cafb92b36f/docs/release_notes.txt)
+document eleven application security fixes after 7.1.1. OS/Composer inventory
+alone does not establish application-source security. New native functional and
+strict artifact security/signing acceptance is mandatory before deployment.
+
 ## Tech stack
-- LimeSurvey Community Edition `7.1.1+260914`, pinned by immutable Git commit.
+- LimeSurvey Community Edition `7.5.0+261001`, pinned by immutable Git commit.
 - PHP 8.3 FPM with required/recommended extensions.
 - Nginx reverse proxy.
 - MariaDB 11.4 LTS, pinned to an explicit image tag.

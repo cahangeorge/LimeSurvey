@@ -228,12 +228,19 @@ class SigningGateTests(unittest.TestCase):
                 gate.sign(self.root, "php", self.sha, self.run, self.attempt)
         cli.assert_not_called()
 
-    def test_sign_then_verify_binds_both_components(self):
+    def test_sign_then_verify_binds_all_components(self):
         for component, base, workflow, status, digest_key in [
+            ("mariadb", "ghcr.io/cahangeorge/limesurvey-mariadb", "mariadb-release.yml", "DATABASE_ARTIFACT_VERIFIED", "digest"),
             ("php", "ghcr.io/cahangeorge/limesurvey", "release.yml", "ARTIFACT_VERIFIED", "digest"),
             ("nginx", "ghcr.io/cahangeorge/limesurvey-nginx", "nginx-release.yml", "COMPANION_ARTIFACT_VERIFIED", "registry_manifest_digest"),
         ]:
             with self.subTest(component=component):
+                if component == "mariadb":
+                    for name in ("buildinfo.json", "parent-image.json", "parent-binary.json", "regression.json",
+                                 "final-inventory.json", "candidate-image.json", "candidate-scan.json",
+                                 "candidate-db.json", "tested.json", "branch.json", "runs.json"):
+                        (self.root / name).write_bytes(b'{}')
+                        self.release["evidence_sha256"][name] = hashlib.sha256(b'{}').hexdigest()
                 self.image = base + "@" + self.digest
                 self.sbom["metadata"]["component"]["name"] = self.image
                 sbom_bytes = json.dumps(self.sbom).encode()
@@ -258,6 +265,15 @@ class SigningGateTests(unittest.TestCase):
                 self.assertEqual(cli.call_args_list[0].args[0], ["sign", "--yes", self.image])
                 self.assertEqual(cli.call_count, 6)
                 self.assertEqual(json.loads((self.root / "provenance.json").read_text()), ctx["provenance"])
+
+    def test_database_additional_evidence_cannot_be_omitted(self):
+        self.image = "ghcr.io/cahangeorge/limesurvey-mariadb@" + self.digest
+        self.release.update(image=self.image, status="DATABASE_ARTIFACT_VERIFIED")
+        self.sbom["metadata"]["component"]["name"] = self.image
+        raw = json.dumps(self.sbom).encode(); (self.root / "sbom.cdx.json").write_bytes(raw)
+        self.release["evidence_sha256"]["sbom.cdx.json"] = hashlib.sha256(raw).hexdigest()
+        self.write_release()
+        with self.assertRaises(gate.GateError): gate.context(self.root, "mariadb", self.sha, self.run, self.attempt)
 
     def test_cosign_process_is_bounded_and_failure_is_propagated(self):
         with patch.object(gate.subprocess, "run", side_effect=subprocess.TimeoutExpired("cosign", 180)) as run:

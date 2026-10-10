@@ -1,7 +1,7 @@
 FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS source
 
-ARG LIMESURVEY_COMMIT=6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9
-ARG LIMESURVEY_ARCHIVE_SHA256=0cc0378756d14c2c8f9634b4f352fe490d167695b24673e38b1b4f321d359bc5
+ARG LIMESURVEY_COMMIT=c5a2ac817396220e054efc3fd26b84cafb92b36f
+ARG LIMESURVEY_ARCHIVE_SHA256=88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493
 
 WORKDIR /var/www/html
 
@@ -63,14 +63,14 @@ PHP
 
 FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS runtime
 
-ARG LIMESURVEY_COMMIT=6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9
-ARG LIMESURVEY_ARCHIVE_SHA256=0cc0378756d14c2c8f9634b4f352fe490d167695b24673e38b1b4f321d359bc5
+ARG LIMESURVEY_COMMIT=c5a2ac817396220e054efc3fd26b84cafb92b36f
+ARG LIMESURVEY_ARCHIVE_SHA256=88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493
 ARG WRAPPER_COMMIT=development
 
 LABEL org.opencontainers.image.title="LimeSurvey for Coolify" \
       org.opencontainers.image.description="Pinned LimeSurvey Community Edition PHP-FPM runtime" \
       org.opencontainers.image.source="https://github.com/cahangeorge/LimeSurvey" \
-      org.opencontainers.image.version="7.1.1+260914" \
+      org.opencontainers.image.version="7.5.0+261001" \
       org.opencontainers.image.revision="${WRAPPER_COMMIT}" \
       io.omnestack.limesurvey.upstream-revision="${LIMESURVEY_COMMIT}" \
       org.opencontainers.image.licenses="GPL-2.0-or-later"

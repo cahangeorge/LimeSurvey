@@ -44,8 +44,10 @@ Create a new Docker Compose application from this repository. Do not alter the e
 Use:
 
 - repository: `cahangeorge/LimeSurvey`
-- revision: immutable release tag `v7.1.1-260914-omnestack.1`
-- Compose file: `/compose.yaml`
+- revision: exact integrated source commit from the accepted release manifest
+- images: accepted PHP, Nginx and MariaDB `repository@sha256:...` identities
+- Compose file: reviewed digest-only operational adapter recorded in the staging
+  receipt; its path is pending, so deployment remains on HOLD
 - public service: `nginx`
 - container port: `80`
 - production hostname: `survey.omnestack.com`
@@ -62,12 +64,18 @@ Create these Coolify variables and mark every credential as secret:
 | `RESEND_FROM_EMAIL` | yes | Sender on a Resend-verified domain |
 | `RESEND_FROM_NAME` | optional | Human-readable sender name |
 
-Do not set `APP_IMAGE` unless deploying a separately built immutable image. The Compose database has no published host port by design.
+Use the reviewed digest-only deployment adapter with all three accepted image
+references and no build definitions. Root `compose.yaml` remains a development
+build recipe; its DB/Nginx defaults are not a production release bundle. Keep
+deployment on HOLD until the adapter and selected triple pass staging. The
+database has no published host port by design.
 
-Deploy beside Formbricks. Confirm the native ARM64 build completes and all three services become healthy before adding migration traffic.
+Deploy beside Formbricks using the already-tested native ARM64 image digests.
+Do not rebuild during promotion. Confirm all three services become healthy and
+complete application smoke before adding migration traffic.
 
-Before deployment, verify that the release tag resolves to the reviewed commit recorded in the
-release evidence. Do not configure Coolify to follow mutable `main` or enable automatic deployment
+Before deployment, verify image signatures/provenance and that source, digests,
+configuration and staging receipts match the accepted release manifest. Do not configure Coolify to follow mutable `main` or enable automatic deployment
 from later pushes.
 
 ## 3. Initialize LimeSurvey
@@ -187,11 +195,60 @@ Restore the application archive only into fresh or deliberately selected volumes
 ## 8. Upgrade
 
 1. Review the LimeSurvey release notes and database migration requirements.
-2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned `app-code-*` volume name in one reviewed change.
+2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
 3. Run the full local gate, dependency/secret review, and native ARM64 build.
 4. Produce and restore-test a fresh production backup.
 5. Deploy in a maintenance window, verify database migrations, browser behavior, plugin availability, persistence, and a Resend test delivery.
 6. Retain the previous Git revision, image, database dump, and application-volume archive until the rollback window closes.
+
+For the current `7.5.0+261001` candidate, the source archive checksum is
+`88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493` and the
+required schema is 717. Fresh `app-code-v7-5-0`, `app-config-v7-5-0`,
+`app-plugins-v7-5-0`, `app-themes-v7-5-0` and `app-runtime-v7-5-0` volumes are
+necessary: populated mounts hide new application files, including upstream
+plugins/themes, `version.php`, configuration defaults and compiled runtime caches.
+Operational volumes containing upstream files must identify the accepted app
+digest and be seeded from that exact image. Database and upload volume names stay
+unchanged. Previous volumes are retained; never run `down --volumes` on an upgrade.
+
+Before starting an upgraded application against an existing database, stop public
+traffic and application writers, complete the paired DB/files backup and isolated
+restore proof, then seed fresh volumes with the new image. Restore the reviewed private
+`application/config/config.php` settings and the original private
+`application/config/security.php` into the fresh config volume before any app or
+CLI execution. Preserve `security.php` byte-for-byte: it contains encryption keys
+and nonces required to read existing encrypted database records. Missing original
+keys for encrypted data block the upgrade; never generate replacements. Reconcile
+private settings with new defaults, verify connection settings and existing-data
+decryption privately, and never log keys or decrypted records. Inventory other
+operator-owned configuration additions and preserve/reconcile each reviewed file,
+including `application/config/allowed_hosts.php` when present; absence must not
+silently relax an existing host allowlist. Verify the accepted hosts before
+restoring traffic. Never overlay the old full config directory or old
+`version.php`/`config-defaults.php`. Missing private configuration is an upgrade
+blocker, not permission to expose or run the installer against an existing DB.
+
+Inventory old plugin/theme volumes and migrate only reviewed custom additions
+into their matching fresh volumes. Do not restore old upstream plugin/theme
+folders over new defaults; check custom plugin compatibility and custom theme
+inheritance against 7.5. Keep the new runtime/cache volume fresh. Verify the
+selected image's version, schema metadata, upstream plugin/theme files and private
+config placement before the serialized migration. A full old application-volume
+archive is for paired recovery with the old image/database, not for overlaying the
+new release. The development Compose file alone is not a production upgrade
+procedure; use the reviewed private operational adapter and migration helper.
+
+The supported schema 712 → 717 command is `updatedb` in the pinned console
+entrypoint. It has no dry-run, writes DSN/SQL-bearing output, and does not
+activate hard maintenance automatically for this range. Execute only through
+the reviewed private operational helper after write quiescence, off-host backup
+and isolated restore proof. One deployment lock must cover backup, migration,
+health and rollback; its built-in runtime-file lock alone does not coordinate
+separate containers or manual deployment. Reject a newer installed schema before
+execution; return code zero and `DBVersion=717` alone do not prove all columns,
+indexes, theme defaults and semantic data updates succeeded. Verify them explicitly.
+An initial empty installation has no upgrade migration; record it as not applicable.
+The source-maintenance phase does not run this command against existing data.
 
 Never change a pinned value to `latest`, `master`, or another moving reference.
 
@@ -202,7 +259,7 @@ Before a database migration, decide whether the old application can read the mig
 For an application-only failure before any schema/data change:
 
 1. Remove traffic from the failed LimeSurvey route.
-2. Redeploy the last verified Git revision and immutable image.
+2. Redeploy the previous accepted image digests and matching code/configuration.
 3. Verify health, login, persistence, and email behavior before restoring traffic.
 
 For a schema, data, or volume failure:

@@ -13,8 +13,8 @@ from pathlib import Path
 REPOSITORY = "cahangeorge/LimeSurvey"
 SOURCE = "https://github.com/" + REPOSITORY
 IMAGE = "ghcr.io/cahangeorge/limesurvey"
-UPSTREAM = "6c2ae12f8a2245fbc0eb4ea0a677155d1ec9b7d9"
-VERSION = "7.1.1+260914"
+UPSTREAM = "c5a2ac817396220e054efc3fd26b84cafb92b36f"
+VERSION = "7.5.0+261001"
 PLUGIN_TARGET = "var/www/html/application/core/plugins/TwoFactorAdminLogin/vendor/composer/installed.json"
 ROOT_TARGET = "var/www/html/vendor/composer/installed.json"
 MANIFEST_TYPES = ("application/vnd.oci.image.manifest.v1+json",

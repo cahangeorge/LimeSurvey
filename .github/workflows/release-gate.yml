@@ -292,9 +292,98 @@ jobs:
           git diff --check
           test -z "$(git status --short --untracked-files=no)"
 
+  arm64-database-gate:
+    name: ARM64 MariaDB gosu, initialization, persistence and security
+    needs: [quality, security]
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 35
+    steps:
+      - name: Check out exact integrated source without credentials
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(uname -m)" = aarch64
+          git init .
+          git remote add origin "https://github.com/${GITHUB_REPOSITORY}.git"
+          git fetch --no-tags --depth=1 origin "${GITHUB_SHA}"
+          git checkout --detach FETCH_HEAD
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          test ! -e "$RUNNER_TEMP/mariadb-ci-evidence"
+          mkdir -m 700 "$RUNNER_TEMP/mariadb-ci-evidence"
+          printf 'EVIDENCE=%s/mariadb-ci-evidence\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+          printf 'RELEASE_TAG=%s:sha-%s-run-%s-%s\n' "limesurvey-mariadb" "$GITHUB_SHA" "$GITHUB_RUN_ID" "$GITHUB_RUN_ATTEMPT" >> "$GITHUB_ENV"
+
+      - name: Build once on native ARM64 and independently extract installed inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 15m docker buildx build --pull --load --platform linux/arm64 \
+            --provenance=false --sbom=false --file docker/mariadb/Dockerfile \
+            --label "org.opencontainers.image.source=https://github.com/cahangeorge/LimeSurvey" \
+            --label "org.opencontainers.image.revision=$GITHUB_SHA" \
+            --label "org.opencontainers.image.version=11.4.13-noble-gosu1.19" \
+            --label "io.omnestack.limesurvey.component=mariadb" \
+            --tag "$RELEASE_TAG" .
+          docker image inspect --format '{{.Id}}' "$RELEASE_TAG" > "$RUNNER_TEMP/tested-image-id"
+          docker image inspect "$RELEASE_TAG" > "$EVIDENCE/candidate-image.json"
+          python3 scripts/ci/mariadb-release.py inventory "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/inventory.json"
+
+      - name: Bind official parent, rebuilt binary and native database regression
+        shell: bash
+        run: |
+          set -euo pipefail
+          parent='docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39'
+          timeout 5m docker pull --platform linux/arm64 "$parent"
+          docker image inspect "$parent" > "$EVIDENCE/parent-image.json"
+          python3 scripts/ci/mariadb-release.py binary "$(docker image inspect --format '{{.Id}}' "$parent")" > "$EVIDENCE/parent-binary.json"
+          python3 scripts/ci/mariadb-release.py binary "$(cat "$RUNNER_TEMP/tested-image-id")" > "$EVIDENCE/buildinfo.json"
+          python3 scripts/ci/mariadb-release.py regression "$(cat "$RUNNER_TEMP/tested-image-id")" "$EVIDENCE"
+          python3 - <<'PYTHON'
+          import json, os
+          from pathlib import Path
+          root = Path(os.environ['EVIDENCE'])
+          tested = {'image_id': (Path(os.environ['RUNNER_TEMP']) / 'tested-image-id').read_text().strip(),
+                    'artifact': os.environ['RUNNER_TEMP'] + '/mariadb-candidate.tar'}
+          (root / 'tested.json').write_text(json.dumps(tested, indent=2) + '\n')
+          PYTHON
+
+      - name: Install checksum-verified ARM64 image scanner
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 2 \
+            --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
+            --output "$RUNNER_TEMP/trivy.tar.gz" \
+            https://github.com/aquasecurity/trivy/releases/download/v0.75.0/trivy_0.75.0_Linux-ARM64.tar.gz
+          printf '%s  %s\n' a1ee9f6ffb7d112b64ff726a2a0717c21175c1114361391f4a132956751a13b3 "$RUNNER_TEMP/trivy.tar.gz" | sha256sum --check --status
+          tar --extract --gzip --file "$RUNNER_TEMP/trivy.tar.gz" --directory "$RUNNER_TEMP" --no-same-owner --no-same-permissions trivy
+          chmod 755 "$RUNNER_TEMP/trivy"
+
+      - name: Scan exported candidate before registry authentication
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 5m docker image save --output "$RUNNER_TEMP/mariadb-candidate.tar" "$(cat "$RUNNER_TEMP/tested-image-id")"
+          "$RUNNER_TEMP/trivy" image --input "$RUNNER_TEMP/mariadb-candidate.tar" \
+            --cache-dir "$RUNNER_TEMP/release-trivy-cache" --timeout 8m --no-progress \
+            --disable-telemetry --offline-scan --skip-version-check --config '' \
+            --scanners vuln --list-all-pkgs --ignorefile '' \
+            --format json --output "$EVIDENCE/candidate-scan.json"
+          cp "$RUNNER_TEMP/release-trivy-cache/db/metadata.json" "$EVIDENCE/candidate-db.json"
+          python3 scripts/ci/mariadb-release.py candidate "$EVIDENCE" "$GITHUB_SHA"
+
+      - name: Preserve bounded database candidate evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mariadb-canary-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/mariadb-ci-evidence/
+          if-no-files-found: warn
+          retention-days: 30
+
   mvp-gate:
     name: MVP required gate
-    needs: [quality, security, arm64-release-gate]
+    needs: [quality, security, arm64-release-gate, arm64-database-gate]
     if: ${{ always() }}
     runs-on: ubuntu-24.04
     timeout-minutes: 2
@@ -304,9 +393,11 @@ jobs:
         env:
           QUALITY_RESULT: ${{ needs.quality.result }}
           SECURITY_RESULT: ${{ needs.security.result }}
+          DATABASE_RESULT: ${{ needs.arm64-database-gate.result }}
           ARM64_RESULT: ${{ needs.arm64-release-gate.result }}
         run: |
           set -euo pipefail
           test "$QUALITY_RESULT" = success
           test "$SECURITY_RESULT" = success
           test "$ARM64_RESULT" = success
+          test "$DATABASE_RESULT" = success

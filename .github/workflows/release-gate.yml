@@ -224,7 +224,7 @@ jobs:
               assert package['Name'] not in reported
               reported[package['Name']]=package['Version']
           assert installed and reported==installed
-          for name,version in {'libexpat':'2.8.5-r0','libpng':'1.6.59-r0','pcre2':'10.49-r0'}.items():
+          for name,version in {'libexpat':'2.8.5-r0','libpng':'1.6.59-r0','pcre2':'10.49-r0','tiff':'4.7.2-r0'}.items():
               assert installed[name]==version
           db=json.loads((p/'db.json').read_text()); now=datetime.datetime.now(datetime.timezone.utc)
           assert db['Version']==2

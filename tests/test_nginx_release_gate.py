@@ -30,7 +30,8 @@ def fixture():
               'org.opencontainers.image.revision': SHA, 'org.opencontainers.image.version': gate.VERSION,
               'io.omnestack.limesurvey.component': 'nginx'}
     image = [{'Id': ID, 'Os': 'linux', 'Architecture': 'arm64', 'Config': {'Labels': labels}, 'RepoDigests': [ref]}]
-    inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': list(map(list, gate.PATCHES.items()))}
+    inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': [['libexpat', '2.8.5-r0'], ['libpng', '1.6.59-r0'],
+                   ['pcre2', '10.49-r0'], ['tiff', '4.7.2-r0']]}
     packages = [{'Name': n, 'Version': v, 'Identifier': {'PURL': 'pkg:apk/alpine/' + n + '@' + v + '?arch=aarch64&distro=3.24.2'}} for n, v in inventory['os']]
     report = {'SchemaVersion': 2, 'ArtifactName': ref, 'ArtifactType': 'container_image', 'Trivy': {'Version': '0.75.0'},
               'Metadata': {'ImageID': ID, 'RepoDigests': [ref], 'ImageConfig': {'architecture': 'arm64', 'os': 'linux'},
@@ -77,7 +78,33 @@ def write_evidence(root):
 
 class NginxReleaseGateTest(unittest.TestCase):
     def test_valid_final_preserves_low_medium(self):
-        self.assertEqual(gate.validate_image(*fixture()), {'os_packages': 3})
+        self.assertEqual(gate.validate_image(*fixture()), {'os_packages': 4})
+
+    def test_rejects_unfixed_tiff_with_consistent_inventory_scan_and_sbom(self):
+        data = fixture()
+        for package in data[4]['os']:
+            if package[0] == 'tiff':
+                package[1] = '4.7.1-r0'
+        old_purl = 'pkg:apk/alpine/tiff@4.7.1-r0?arch=aarch64&distro=3.24.2'
+        for package in data[3]['Results'][0]['Packages']:
+            if package['Name'] == 'tiff':
+                package['Version'] = '4.7.1-r0'
+                package['Identifier']['PURL'] = old_purl
+        for component in data[6]['components']:
+            if component['name'] == 'tiff':
+                component.update(version='4.7.1-r0', purl=old_purl)
+                component['bom-ref'] = old_purl
+        with self.assertRaisesRegex(ValueError, 'missing patched APK versions'):
+            gate.validate_image(*data)
+
+    def test_rejects_missing_tiff_with_consistent_inventory_scan_and_sbom(self):
+        data = fixture()
+        data[4]['os'] = [package for package in data[4]['os'] if package[0] != 'tiff']
+        packages = data[3]['Results'][0]['Packages']
+        data[3]['Results'][0]['Packages'] = [package for package in packages if package['Name'] != 'tiff']
+        data[6]['components'] = [component for component in data[6]['components'] if component['name'] != 'tiff']
+        with self.assertRaisesRegex(ValueError, 'missing patched APK versions'):
+            gate.validate_image(*data)
 
     def test_rejects_identity_coverage_and_severity_mutations(self):
         mutations = [
@@ -157,7 +184,7 @@ class NginxReleaseGateTest(unittest.TestCase):
         data[3]['Results'][0]['Packages'].append({'Name': 'libstdc++', 'Version': '16.1.0-r0', 'Identifier': {'PURL': purl}})
         data[6]['components'].extend([{'type': 'library', 'name': 'libstdc++', 'version': '16.1.0-r0', 'purl': purl, 'bom-ref': purl},
                                       {'type': 'operating-system', 'name': 'alpine', 'version': '3.24.2', 'bom-ref': 'os-reference'}])
-        self.assertEqual(gate.validate_image(*data), {'os_packages': 4})
+        self.assertEqual(gate.validate_image(*data), {'os_packages': 5})
 
     def test_approved_fpm_mutations(self):
         raw = FPM_RAW

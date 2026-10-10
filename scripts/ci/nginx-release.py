@@ -17,7 +17,7 @@ _spec.loader.exec_module(shared)
 require = shared.require
 IMAGE = 'ghcr.io/cahangeorge/limesurvey-nginx'
 VERSION = '1.30.5-alpine3.24.2'
-PATCHES = {'libexpat': '2.8.5-r0', 'libpng': '1.6.59-r0', 'pcre2': '10.49-r0'}
+PATCHES = {'libexpat': '2.8.5-r0', 'libpng': '1.6.59-r0', 'pcre2': '10.49-r0', 'tiff': '4.7.2-r0'}
 FPM_REF = shared.IMAGE + '@sha256:4193d1c9bef626c675381fe2bad07b400bcf5cce56e373c221babae2ce9d3510'
 FPM_ID = 'sha256:ecad9df832a2f9e20585922ece061d2527f117a9436c8271ca27efe33c1fb4da'
 FPM_SHA = '58de3e047274976775a726fe4b21d879ba7a7844'

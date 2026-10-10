@@ -6,9 +6,11 @@ not rebuild or promote that release automatically.
 
 `docker/nginx/Dockerfile` retains the immutable official Nginx1.30.5 Alpine3.24
 base and its entrypoint/modules. It upgrades exactly libexpat2.8.5-r0,
-libpng1.6.59-r0 and pcre2 10.49-r0 to address the corresponding reported package
-findings. Repository updates can change dependency resolution despite the base
-pin; installed inventory and the resulting image identity must be validated.
+libpng1.6.59-r0, pcre2 10.49-r0 and tiff4.7.2-r0 to address the corresponding
+reported package findings. TIFF4.7.2-r0 is the Alpine3.24 fix for CVE-2026-4775
+([official security database](https://secdb.alpinelinux.org/v3.24/main.json));
+the fixed package is available for aarch64. Repository updates can change
+dependency resolution despite the base pin; installed inventory and the resulting image identity must be validated.
 Do not substitute another Alpine branch, disable signature verification or
 silently accept unavailable package versions.
 
@@ -54,7 +56,7 @@ are validated before smoke. That artifact was accepted by release run
 `scripts/ci/nginx-release.py` reuses the existing pure CI preflight, APK parsing
 and DB freshness helpers, with separate Nginx-specific identity validation. The
 candidate's independent installed APK inventory must match its complete exported
-image scan, including the three exact patched versions. Trivy0.75.0 is pinned by
+image scan, including the four exact patched versions. Trivy0.75.0 is pinned by
 its ARM64 archive checksum. DBv2 must be updated within48hours and downloaded
 within24hours, with at most5minutes of future clock skew. Alpine3.24.2 and no EOL
 flag are required. HIGH, CRITICAL, UNKNOWN and malformed severities block
@@ -88,11 +90,15 @@ python3 -m unittest discover -s tests -p 'test_*gate.py'
 python3 scripts/ci/nginx-release.py --help
 ```
 
-Publication execution and a native registry artifact remain unverified until
-separately authorized source integration and the first manual dispatch. Compose
-still does not consume this companion. Staging needs a separately reviewed
-configuration using exact PHP/Nginx digests, MariaDB resolution, and deployment
-approval. The proxy smoke does not initialize a database or prove LimeSurvey,
+The TIFF remediation is a new candidate recipe. It does not change any
+previously published immutable image: a new native ARM64 build, complete scan,
+proxy smoke and separately authorized publication are required before accepting
+a replacement digest. The gate rejects missing TIFF or tiff4.7.1-r0 even when
+the installed inventory, scan and SBOM agree and no HIGH finding is reported.
+The existing staging recipe remains pinned to its previously reviewed companion
+digest until a separate reviewed change selects an accepted replacement.
+Staging still requires MariaDB resolution and deployment approval. The proxy
+smoke does not initialize a database or prove LimeSurvey,
 backup/recovery, migrations or production acceptance.
 
 MariaDB/gosu findings require exact binary, toolchain, platform and CVE database

@@ -16,6 +16,8 @@ import stat
 import subprocess
 import sys
 import time
+import tempfile
+import copy
 import urllib.request
 from urllib.parse import urlsplit
 
@@ -78,8 +80,8 @@ def recent(value, seconds=86400):
     require(stamp.tzinfo is not None and -300 <= (datetime.now(timezone.utc) - stamp).total_seconds() <= seconds)
 
 
-def command(arguments, data=None, timeout=120):
-    result = subprocess.run(arguments, input=data, capture_output=True, timeout=timeout)
+def command(arguments, data=None, timeout=120, env=None):
+    result = subprocess.run(arguments, input=data, capture_output=True, timeout=timeout, env=env)
     require(result.returncode == 0)
     return result.stdout
 
@@ -88,12 +90,89 @@ def docker(*args, data=None, timeout=120):
     return command(['docker', *args], data=data, timeout=timeout)
 
 
+def compare_configuration(expected, actual, project):
+    actual = copy.deepcopy(actual)
+    provider = {'coolify.managed': 'true', 'coolify.applicationUuid': project, 'coolify.type': 'application'}
+    require(set(actual.get('services', {})) == set(expected.get('services', {})) == set(IMAGES))
+    for service in actual['services'].values():
+        labels = service.get('labels', {})
+        require(isinstance(labels, dict))
+        injected = set(labels) & set(provider)
+        if injected:
+            require(injected == set(provider) and all(labels[key] == value for key, value in provider.items()))
+            for key in provider: del labels[key]
+            if not labels: service.pop('labels', None)
+    require(actual == expected)
+
+
+def configuration_source(value, rendered=False):
+    repository = Path(value['repository_root'])
+    adapter = repository / 'deploy/staging.compose.yaml'
+    require(not adapter.is_symlink() and adapter.is_file())
+    require(command(['git', '-C', str(repository), 'rev-parse', 'HEAD']).decode().strip()
+            == value['configuration_commit'])
+    committed_adapter = None
+    for relative, expected in (('deploy/staging.compose.yaml', value['adapter_sha256']),
+                               ('docker/nginx/default.conf', value['nginx_sha256'])):
+        target = repository / relative
+        require(not target.is_symlink() and target.is_file())
+        committed = command(['git', '-C', str(repository), 'show', value['configuration_commit'] + ':' + relative])
+        require(hashlib.sha256(committed).hexdigest() == expected)
+        if relative.startswith('deploy/'):
+            committed_adapter = committed
+            if not rendered: require(target.read_bytes() == committed)
+        else:
+            require(target.read_bytes() == committed)
+    if rendered:
+        env_file = protected(repository / '.env')
+        generated = repository / 'docker-compose.yaml'
+        require(generated.is_file() and not generated.is_symlink())
+        env = {key: val for key, val in os.environ.items()
+               if not key.startswith(('DELIVERY_', 'STAGING_', 'COMPOSE_'))}
+        env.update(adapter_environment(value))
+        def render(path):
+            return json.loads(command(['docker', 'compose', '--project-directory', str(repository),
+                '--env-file', str(env_file), '--project-name', value['project'], '-f', str(path),
+                'config', '--format', 'json'], env=env))
+        with tempfile.TemporaryDirectory(prefix='ls-reviewed-adapter-') as directory:
+            source = Path(directory) / 'adapter.yaml'
+            descriptor = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(descriptor, 'wb') as stream: stream.write(committed_adapter)
+            expected = render(source)
+            compare_configuration(expected, render(adapter), value['project'])
+            compare_configuration(expected, render(generated), value['project'])
+
+
+def runtime_options(service, item, image):
+    host = item['HostConfig']
+    memory, cpu = {'db': (1073741824, 1000000000), 'app': (536870912, 1000000000),
+                   'nginx': (134217728, 250000000)}[service]
+    require(host.get('Memory') == memory and host.get('NanoCpus') == cpu
+            and not host.get('CpuQuota') and not host.get('CpuPeriod')
+            and host.get('RestartPolicy') == {'Name': 'unless-stopped', 'MaximumRetryCount': 0}
+            and not host.get('SecurityOpt') and not host.get('CapDrop')
+            and host.get('ReadonlyRootfs', False) is (service == 'nginx'))
+    for field in ('Cmd', 'Entrypoint', 'User', 'WorkingDir', 'StopSignal'):
+        actual, expected = item['Config'].get(field), image['Config'].get(field)
+        if field in ('User', 'WorkingDir'): actual, expected = actual or '', expected or ''
+        require(actual == expected)
+    tests = {'db': ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized'],
+             'app': ['CMD-SHELL', 'kill -0 1 && php-fpm -t'],
+             'nginx': ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1/healthz']}
+    expected = {'Test': tests[service], 'Interval': 10000000000, 'Timeout': 5000000000,
+                'Retries': 12 if service == 'db' else 6,
+                'StartPeriod': {'db': 30000000000, 'app': 20000000000, 'nginx': 10000000000}[service]}
+    actual = dict(item['Config'].get('Healthcheck') or {})
+    require(actual.pop('StartInterval', 0) == 0 and actual == expected)
+
+
 def manifest(path, expected, local_configuration=True):
     value = load_private(path, expected)
     require(value.get('schema_version') == 1 and value.get('environment') == 'staging')
     project = value['project']
     require(isinstance(project, str) and re.fullmatch(r'[a-z0-9]{20,64}', project))
     require(re.fullmatch(r'[0-9a-f]{40}', value['configuration_commit']))
+    require(re.fullmatch(r'[0-9a-f]{64}', value['adapter_sha256']))
     require(type(value['port']) is int and 1024 <= value['port'] <= 65535)
     require(set(value['images']) == set(REPOSITORIES) and set(value['config_digests']) == set(REPOSITORIES))
     for kind, repository in REPOSITORIES.items():
@@ -108,7 +187,7 @@ def manifest(path, expected, local_configuration=True):
     require(repository.is_absolute())
     config = repository / 'docker/nginx/default.conf'
     if local_configuration:
-        require(not config.is_symlink() and file_hash(config) == value['nginx_sha256'])
+        configuration_source(value, rendered=(repository / 'docker-compose.yaml').exists())
     state = Path(value['state_file'])
     require(state.is_absolute() and state.parent.resolve() == Path(path).resolve().parent)
     admission = value['admission']
@@ -287,9 +366,10 @@ def prepare(value):
 
 
 def runtime(value, state, require_healthy=True):
+    configuration_source(value, rendered=True)
     owned_resources(value, state)
-    image_ids = {kind: image_identity(value, kind, json.loads(docker('image', 'inspect', value['images'][kind])))
-                 for kind in REPOSITORIES}
+    images = {kind: json.loads(docker('image', 'inspect', value['images'][kind])) for kind in REPOSITORIES}
+    image_ids = {kind: image_identity(value, kind, images[kind]) for kind in REPOSITORIES}
     identifiers = docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=' + value['project']).decode().split()
     require(len(identifiers) == 3)
     inspected = json.loads(docker('inspect', *identifiers))
@@ -300,6 +380,7 @@ def runtime(value, state, require_healthy=True):
         require(item['Config']['Labels'].get('com.docker.compose.project') == value['project']
                 and item['Image'] == image_ids[IMAGES[service]]
                 and item['Config']['Image'] == value['images'][IMAGES[service]])
+        runtime_options(service, item, images[IMAGES[service]][0])
         if require_healthy: require(item['State'].get('Health', {}).get('Status') == 'healthy')
         networks = item['NetworkSettings']['Networks']
         expected_networks = {'backend', 'frontend'} if service == 'nginx' else {'backend'}
@@ -357,7 +438,8 @@ def snapshot(value):
     require(schema.strip() == b'717')
     return {'schema_version': 1, 'status': 'RUNTIME_SNAPSHOT_VERIFIED', 'manifest_sha256': value['_manifest_sha256'],
             'checked_at': datetime.now(timezone.utc).isoformat(), 'containers': containers,
-            'resources': state['resources'], 'schema': 717, 'nginx_sha256': value['nginx_sha256'], 'mail': 'DISABLED'}
+            'resources': state['resources'], 'configuration_commit': value['configuration_commit'],
+            'adapter_sha256': value['adapter_sha256'], 'schema': 717, 'nginx_sha256': value['nginx_sha256'], 'mail': 'DISABLED'}
 
 
 def initialize(value, credentials):
@@ -375,7 +457,7 @@ def initialize(value, credentials):
     configuration = "<?php return ['components'=>['db'=>['class'=>'DbConnection','connectionString'=>'mysql:host=db;port=3306;dbname='.getenv('DB_NAME'),'username'=>getenv('DB_USER'),'password'=>getenv('DB_PASSWORD'),'charset'=>'utf8mb4','emulatePrepare'=>true,'tablePrefix'=>'lime_']], 'config'=>['RPCInterface'=>'json']];"
     docker('exec', '-i', '--user', 'www-data', app, 'sh', '-eu', '-c',
            'test ! -e application/config/config.php; cat > application/config/config.php', data=configuration.encode())
-    installer = '$p=json_decode(stream_get_contents(STDIN),true); $cmd=[PHP_BINARY,"application/commands/console.php","install",$p[0],$p[1],"Synthetic admin","probe@example.invalid"]; $r=proc_open($cmd,[0=>["file","/dev/null","r"],1=>["file","/dev/null","w"],2=>["file","/dev/null","w"]],$pipes); exit(proc_close($r));'
+    installer = '$p=json_decode(stream_get_contents(STDIN),true,512,JSON_THROW_ON_ERROR); $_SERVER["argv"]=$GLOBALS["argv"]=["application/commands/console.php","install",$p[0],$p[1],"Synthetic admin","probe@example.invalid"]; $_SERVER["argc"]=$GLOBALS["argc"]=count($_SERVER["argv"]); unset($p); require "application/commands/console.php";'
     docker('exec', '-i', '--user', 'www-data', app, 'php', '-r', installer,
            data=json.dumps([auth['admin_user'], auth['admin_password']]).encode(), timeout=180)
     state['containers'] = containers; state['status'] = 'INITIALIZED'; save_private(value['state_file'], state)
@@ -443,6 +525,8 @@ def probe(value, phase, url, credentials, receipt_path, snapshot_path, snapshot_
     url = url.rstrip('/')
     proof = load_private(snapshot_path, snapshot_sha)
     require(proof.get('status') == 'RUNTIME_SNAPSHOT_VERIFIED' and proof.get('manifest_sha256') == value['_manifest_sha256']
+            and proof.get('configuration_commit') == value['configuration_commit']
+            and proof.get('adapter_sha256') == value['adapter_sha256']
             and proof.get('schema') == 717 and proof.get('nginx_sha256') == value['nginx_sha256'] and proof.get('mail') == 'DISABLED')
     recent(proof['checked_at'], 600)
     previous = None

@@ -34,6 +34,15 @@ class OperationalGateTests(unittest.TestCase):
         self.project = 'a' * 24
         repository = self.root / 'repository'; (repository / 'docker/nginx').mkdir(parents=True)
         nginx = repository / 'docker/nginx/default.conf'; nginx.write_text('synthetic nginx configuration')
+        (repository / 'deploy').mkdir()
+        adapter = repository / 'deploy/staging.compose.yaml'
+        adapter.write_bytes((ROOT / 'deploy/staging.compose.yaml').read_bytes())
+        subprocess.run(['git', 'init', '-q', str(repository)], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(repository), 'add', '.'], check=True, capture_output=True)
+        subprocess.run(['git', '-C', str(repository), '-c', 'user.name=Synthetic',
+                        '-c', 'user.email=probe@example.invalid', '-c', 'commit.gpgsign=false',
+                        'commit', '-qm', 'Synthetic fixture'], check=True, capture_output=True)
+        self.configuration_commit = subprocess.check_output(['git', '-C', str(repository), 'rev-parse', 'HEAD']).decode().strip()
         configs = {kind: 'sha256:' + str(index + 3) * 64 for index, kind in enumerate(gate.REPOSITORIES, 1)}
         images = {}; self.artifact_images = {}; self.registry_manifests = {}
         for kind, repository_name in gate.REPOSITORIES.items():
@@ -50,7 +59,7 @@ class OperationalGateTests(unittest.TestCase):
         self.target_images = copy.deepcopy(self.artifact_images)
         full = images['php'].split(':')[-1]
         self.value = {'schema_version': 1, 'environment': 'staging', 'project': self.project,
-                      'configuration_commit': 'a' * 40, 'repository_root': str(repository),
+                      'configuration_commit': self.configuration_commit, 'adapter_sha256': digest(adapter), 'repository_root': str(repository),
                       'nginx_sha256': digest(nginx), 'port': 18481, 'images': images, 'config_digests': configs,
                       'volumes': {kind: self.project + '-stage-' + kind + ('-' + full if kind not in ('db', 'upload') else '') for kind in gate.VOLUMES},
                       'networks': {kind: self.project + '-stage-' + kind for kind in ('backend', 'frontend')},
@@ -89,6 +98,23 @@ class OperationalGateTests(unittest.TestCase):
         self.state = {'manifest_sha256': self.value['_manifest_sha256'], 'resources': self.resources,
                       'status': 'PREPARED', 'containers': {}, 'seed_container': None}
         self.inspect = self.runtime_fixture()
+        (repository / '.env').write_text('STAGING_DB_NAME=synthetic\n'); (repository / '.env').chmod(0o600)
+        (repository / 'docker-compose.yaml').write_bytes(adapter.read_bytes())
+        self.rendered_config = {'name': self.project, 'services': {service: {'image': self.value['images'][kind]} for service, kind in gate.IMAGES.items()}}
+        self.expected_config = copy.deepcopy(self.rendered_config)
+        original_command = gate.command
+        def render_command(arguments, **kwargs):
+            if arguments[:2] == ['docker', 'compose']:
+                self.assertEqual(kwargs['env']['DELIVERY_PROJECT'], self.project)
+                self.assertEqual(kwargs['env']['DELIVERY_APP_IMAGE'], self.value['images']['php'])
+                source = Path(arguments[arguments.index('-f') + 1])
+                if source.name == 'adapter.yaml':
+                    self.assertEqual(source.stat().st_mode & 0o777, 0o600)
+                    return json.dumps(self.expected_config).encode()
+                return json.dumps(self.rendered_config).encode()
+            return original_command(arguments, **kwargs)
+        mocked = patch.object(gate, 'command', side_effect=render_command)
+        mocked.start(); self.addCleanup(mocked.stop)
 
     def bind(self):
         self.value.pop('_manifest_sha256', None)
@@ -106,9 +132,16 @@ class OperationalGateTests(unittest.TestCase):
             networks = {'backend', 'frontend'} if service == 'nginx' else {'backend'}
             result.append({'Id': str(index) * 64, 'Image': self.value['config_digests'][kind],
                 'Config': {'Image': self.value['images'][kind], 'Labels': {'com.docker.compose.project': self.project,
-                          'com.docker.compose.service': service}, 'Env': ['='.join(('RESEND_API_KEY', '')), 'DB_HOST=db']},
+                          'com.docker.compose.service': service},
+                          **{field: self.artifact_images[kind]['Config'].get(field) for field in ('Cmd', 'Entrypoint', 'User', 'WorkingDir', 'StopSignal')},
+                          'Healthcheck': {'Test': {'app': ['CMD-SHELL', 'kill -0 1 && php-fpm -t'], 'db': ['CMD', 'healthcheck.sh', '--connect', '--innodb_initialized'], 'nginx': ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1/healthz']}[service],
+                           'Interval': 10000000000, 'Timeout': 5000000000, 'Retries': 12 if service == 'db' else 6,
+                           'StartPeriod': {'app': 20000000000, 'db': 30000000000, 'nginx': 10000000000}[service]}, 'Env': ['='.join(('RESEND_API_KEY', '')), 'DB_HOST=db']},
                 'State': {'Health': {'Status': 'healthy'}}, 'Mounts': mounts,
-                'HostConfig': {'ReadonlyRootfs': service == 'nginx', 'Privileged': False},
+                'HostConfig': {'ReadonlyRootfs': service == 'nginx', 'Privileged': False,
+                               'Memory': {'app': 536870912, 'db': 1073741824, 'nginx': 134217728}[service],
+                               'NanoCpus': 250000000 if service == 'nginx' else 1000000000,
+                               'RestartPolicy': {'Name': 'unless-stopped', 'MaximumRetryCount': 0}},
                 'NetworkSettings': {'Networks': {self.value['networks'][name]: {'NetworkID': self.resources[self.value['networks'][name]]['id']} for name in networks},
                                     'Ports': {'80/tcp': [{'HostIp': '127.0.0.1', 'HostPort': str(self.value['port'])}]} if service == 'nginx' else {}}})
         return result
@@ -137,7 +170,7 @@ class OperationalGateTests(unittest.TestCase):
         with patch.object(gate, 'docker', side_effect=self.docker): return gate.runtime(self.value, self.state)
 
     def test_trusted_manifest_allows_distinct_configuration_and_build_source(self):
-        self.assertEqual(self.value['configuration_commit'], 'a' * 40)
+        self.assertEqual(self.value['configuration_commit'], self.configuration_commit)
         self.assertNotEqual(self.value['configuration_commit'], json.loads(Path(self.value['admission']['bundle']).read_text())['source_commit'])
         environment = gate.adapter_environment(self.value)
         self.assertFalse(any('PASSWORD' in name or 'KEY' in name for name in environment))
@@ -154,6 +187,74 @@ class OperationalGateTests(unittest.TestCase):
                        lambda v: v.update(port=80)):
             value = copy.deepcopy(original); value.pop('_manifest_sha256'); mutate(value); write(self.path, value)
             with self.subTest(mutate=mutate), self.assertRaises(ValueError): gate.manifest(self.path, digest(self.path))
+
+    def test_configuration_source_requires_head_and_exact_committed_adapter(self):
+        original = self.value['configuration_commit']
+        self.value['configuration_commit'] = '0' * 40
+        with self.assertRaises(ValueError): gate.configuration_source(self.value)
+        self.value['configuration_commit'] = original
+        adapter = Path(self.value['repository_root']) / 'deploy/staging.compose.yaml'
+        original_bytes = adapter.read_bytes()
+        adapter.write_bytes(original_bytes + b'\n# changed source adapter\n')
+        with self.assertRaises(ValueError): gate.configuration_source(self.value)
+        # Even updating the candidate hash cannot hide an uncommitted adapter change.
+        self.value['adapter_sha256'] = digest(adapter)
+        with self.assertRaises(ValueError): gate.configuration_source(self.value)
+        adapter.write_bytes(original_bytes); self.value['adapter_sha256'] = digest(adapter)
+        gate.configuration_source(self.value)
+
+    def test_rendered_configuration_only_tolerates_exact_raw_provider_labels(self):
+        expected = {'name': self.project, 'services': {service: {'image': self.value['images'][kind]} for service, kind in gate.IMAGES.items()}}
+        actual = copy.deepcopy(expected)
+        provider = {'coolify.managed': 'true', 'coolify.applicationUuid': self.project, 'coolify.type': 'application'}
+        for service in actual['services'].values(): service['labels'] = dict(provider)
+        gate.compare_configuration(expected, actual, self.project)
+        for mutate in (lambda v: v['services']['db'].update(networks=['external-uuid']),
+                       lambda v: v['services']['app'].update(env_file=['unexpected.env']),
+                       lambda v: v['services']['nginx'].update(command=['wrong']),
+                       lambda v: v['services']['db']['labels'].update({'coolify.applicationUuid': 'wrong'}),
+                       lambda v: v['services']['db']['labels'].update({'extra': 'unsafe'}),
+                       lambda v: v['services']['db']['labels'].pop('coolify.type')):
+            changed = copy.deepcopy(actual); mutate(changed)
+            with self.subTest(mutate=mutate), self.assertRaises(ValueError):
+                gate.compare_configuration(expected, changed, self.project)
+
+    def test_runtime_rejects_changed_rendered_compose_before_inspecting_resources(self):
+        self.rendered_config['services']['db']['networks'] = ['extra-coolify-network']
+        with patch.object(gate, 'docker', side_effect=AssertionError('runtime inspection must not begin')):
+            with self.assertRaises(ValueError): gate.runtime(self.value, self.state)
+
+    def test_runtime_rejects_changed_execution_and_resource_options(self):
+        original = copy.deepcopy(self.inspect)
+        for service_index in range(3):
+            changes = [('Config', 'Cmd', ['unexpected']), ('Config', 'Entrypoint', ['sh']),
+                       ('HostConfig', 'SecurityOpt', ['seccomp=unconfined']),
+                       ('HostConfig', 'CapDrop', ['ALL']), ('HostConfig', 'Memory', 0),
+                       ('HostConfig', 'NanoCpus', 0), ('HostConfig', 'RestartPolicy', {'Name': 'always', 'MaximumRetryCount': 0}),
+                       ('Config', 'Healthcheck', {'Test': ['NONE']})]
+            for section, field, replacement in changes:
+                self.inspect = copy.deepcopy(original)
+                self.inspect[service_index][section][field] = replacement
+                with self.subTest(service=service_index, field=field), self.assertRaises(ValueError):
+                    self.check_runtime()
+        self.inspect = original
+
+    def test_initialize_keeps_admin_password_only_in_stdin_and_php_memory(self):
+        write(Path(self.value['state_file']), self.state)
+        credentials = self.root / 'credentials.json'
+        password = 'synthetic-private-password-' * 3
+        write(credentials, {'admin_user': 'syntheticadmin', 'admin_password': password})
+        with patch.object(gate, 'docker', side_effect=self.docker) as mocked:
+            gate.initialize(self.value, credentials)
+        calls = [call for call in mocked.call_args_list if 'php' in call.args]
+        self.assertEqual(len(calls), 1)
+        self.assertNotIn(password, repr(calls[0].args))
+        self.assertIn(password, calls[0].kwargs['data'].decode())
+        bootstrap = calls[0].args[-1]
+        self.assertNotIn('proc_open', bootstrap)
+        self.assertNotIn('getenv', bootstrap)
+        self.assertIn('$_SERVER["argv"]=$GLOBALS["argv"]', bootstrap)
+        self.assertIn('require "application/commands/console.php"', bootstrap)
 
     def test_expired_admission_or_changed_raw_artifact_blocks(self):
         path = Path(self.value['admission']['receipt'])
@@ -367,6 +468,7 @@ class OperationalGateTests(unittest.TestCase):
         url = 'http://127.0.0.1:18481'
         receipt = self.root / ('probe-' + phase + '-' + str(release_ok) + '.json')
         proof = {'status': 'RUNTIME_SNAPSHOT_VERIFIED', 'manifest_sha256': self.value['_manifest_sha256'],
+                 'configuration_commit': self.value['configuration_commit'], 'adapter_sha256': self.value['adapter_sha256'],
                  'schema': 717, 'nginx_sha256': self.value['nginx_sha256'], 'mail': 'DISABLED',
                  'checked_at': datetime.now(timezone.utc).isoformat(), 'containers': self.check_runtime(),
                  'resources': self.resources, 'restart': 'PASS'}

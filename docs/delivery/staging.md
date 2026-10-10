@@ -11,40 +11,40 @@ provisioning or database operation. A successful local gate returns
 | Component | Source / run | Immutable registry identity |
 | --- | --- | --- |
 | PHP | `58de3e047274976775a726fe4b21d879ba7a7844`, run `37186347292/1` | `ghcr.io/cahangeorge/limesurvey@sha256:4193d1c9bef626c675381fe2bad07b400bcf5cce56e373c221babae2ce9d3510` |
-| Nginx | `d2651b5e9c265b58703abc3eb1ec2b88b19c1852`, run `37657981977/1` | `ghcr.io/cahangeorge/limesurvey-nginx@sha256:16699f0b601082faf0c60750a20128d024788f35675831afd80a9081493bb3d9` |
+| Nginx | `2b7abac451afb0ce74aae735fe8b62d5ce171b41`, run `38053603034/1` | `ghcr.io/cahangeorge/limesurvey-nginx@sha256:a8eeb20f935ef074537bdafe1151dae2892ce381f97305edc448af1647a061f4` |
 | MariaDB | official 11.4.13 Noble, upstream `bdfe641466a5312bb97d06a1a4e1fb411c49e6b6` | `docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39` |
 
 The helper pins the independently accepted release manifest hashes and verifies
-every referenced evidence file. It reproduces existing component scan/SBOM and
-provenance checks using their archived DB download times. These are explicitly
-historical release checks, not fresh vulnerability scans. PHP/Nginx fresh scans
-remain required before execution; neither artifact is rebuilt here.
+all referenced evidence bytes. Original PHP provenance/inventory/SBOM are checked
+against its fresh exact-digest scan; Nginx uses the current replacement release
+scan/SBOM and native proxy test evidence. These checks use the current clock and
+hold when scans or DB metadata age out. Neither artifact is rebuilt here.
 
-Private evidence root layout (never commit these operational records):
+Private evidence root layout (never commit operational records):
 
 ```text
 release-evidence-37186347292-1/       # original PHP release bundle
-nginx-release-evidence-37657981977-1/ # original Nginx release bundle
-staging-preflight-20261007/
-  mariadb-disposition.proposed.json  # immutable reviewed proposal, still marked draft
-  noble-scan-acceptance.json
-  11.4.13-noble-scan.json
-  11.4.13-noble-scan-db.json
-  noble-installed-inventory.json
-  11.4.13-noble-arm64-manifest.json
-  11.4.13-noble-index.json
+nginx-tiff-publication-20261010/release-evidence/ # replacement Nginx release bundle
+published-readiness-20261010/
+  mariadb-30-disposition.proposed.json # immutable reviewed proposal, retained as draft
+  app-scan.json / app-scan-db.json
+  db-scan.json / db-scan-db.json
+  db-live-manifest.json / db-live-index.json
   go-record-refresh.json
   go-records/GO-*.json
-companion.gosu-root-acceptance.json
-gosu-reachability-evidence/reachability-matrix.json
+  applicability/                    # four bounded source/binary result streams
+staging-preflight-20261007/noble-installed-inventory.json
 ```
 
 The proposal lists its exact CVE/package/version/severity/Go-ID tuples and
 reviewed evidence hashes. Its SHA-256 is pinned in the helper. The separately
 accepted private authority record has `status: ACCEPTED`, `owner: gion`,
 `scope: isolated-synthetic-staging`, the same `proposal_sha256`,
-`review_at: 2026-10-10T18:00:00Z`, and `expires_at: 2026-10-14T18:00:00Z`.
+`review_at: 2026-10-11T12:00:00Z`, and `expires_at: 2026-10-14T18:00:00Z`.
 Keep the actual human acceptance and provenance with that private record.
+This is a new, explicitly approved 30-finding disposition; it does not rewrite or
+renew the archived 23-finding authority. The pinned proposal SHA-256 is
+`9841ff3bccd351a02202fb809eb902908267f87c827ae443c8c905cf85b7ea02`.
 
 The **operator-provided, previously trusted authority hash is the trust root**.
 This is a tamper-evident local check, not a signature or an independent identity
@@ -54,9 +54,12 @@ proposal is not rewritten to simulate an approval.
 
 ## Bounded MariaDB disposition
 
-The raw Trivy result remains **FAIL: 23 blocking findings in
-`usr/local/bin/gosu`**, including UNKNOWN severity. Separate applicability
-evidence found no affected reachable symbols in the reviewed exact source/binary;
+The raw Trivy result remains **FAIL: 30 blocking findings in
+`usr/local/bin/gosu`**, 1 CRITICAL, 24 HIGH and 5 UNKNOWN. Four bounded
+source/binary analyses
+with govulncheck 1.8.0 and 1.1.4 found no affected functions for these exact
+records; both versions belong to the same scanner family. Thirty-four official
+Go records remain visible, with only the 30 current blocking tuples accepted;
 this does not establish zero risk. Only those exact tuples on the fixed
 leaf/config/gosu hash are accepted for isolated staging with synthetic data and
 blocked external egress. OS findings and all unlisted findings retain strict
@@ -65,21 +68,24 @@ exception.
 
 Missing acceptance, review due, expiry, changed artifact/Go record, missing or
 duplicate package/CVE coverage, stale scan/DB/Go refresh, or altered Compose
-configuration returns HOLD. Review due on October 10 also holds even though the
-hard expiry is October 14; neither date is automatically extended. DB updates
+configuration returns HOLD. Review due on October 11 at 12:00 UTC also holds
+even though the hard expiry is October 14; neither date is automatically extended. DB updates
 must be at most 48 hours old, downloads/scans/Go refresh at most 24 hours old,
 with at most five minutes of future clock skew.
 
-This first local recipe deliberately pins the reviewed preflight scan, inventory,
-DB metadata, and Go-record snapshot. When evidence ages out, a fresh review and
-bounded recipe update are required. Do not edit timestamps to make old evidence
+This local recipe pins the reviewed October 10 scans, original installed DB
+inventory, current DB metadata, and refreshed Go records. When evidence ages
+out, a fresh review and bounded recipe update are required. Do not edit timestamps to make old evidence
 appear fresh. The local report is not a reusable deploy authorization.
 
 ## Configuration-only commands
 
 Use the actual target Docker Compose provider for parsing, or its separately
-validated identical version. The current target parser is Compose 5.4.0; local
-Podman Compose output is not equivalent evidence. The following command only
+validated identical version. The last verified target parser is Compose 5.4.0.
+The separately checksum-verified local official 5.4.0 parser reproduces its
+archived baseline output; the candidate
+changes only the Nginx digest. Recheck the actual provider before runtime use.
+Local Podman Compose output is not equivalent evidence. The following command only
 parses YAML with fictive inputs. It starts no services, writes no remote files,
 and uses no deployment credentials:
 

@@ -61,7 +61,7 @@ services:
     cpus: '1.0'
     mem_limit: 512m
   nginx:
-    image: ghcr.io/cahangeorge/limesurvey-nginx@sha256:16699f0b601082faf0c60750a20128d024788f35675831afd80a9081493bb3d9
+    image: ghcr.io/cahangeorge/limesurvey-nginx@sha256:a8eeb20f935ef074537bdafe1151dae2892ce381f97305edc448af1647a061f4
     restart: unless-stopped
     read_only: true
     volumes:

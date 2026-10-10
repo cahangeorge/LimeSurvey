@@ -19,24 +19,24 @@ DB_REF = 'docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b
 DB_CONFIG = 'sha256:46d43d3c938ae9c1826af3c4093cea628499394820aab667519d72be306c6f9c'
 DB_INDEX = 'sha256:1292844148b311e4ed4300022a996d39083f415a963e970cf47cad1b3b18e3a6'
 GOSU = '3a8ef022d82c0bc4a98bcb144e77da714c25fcfa64dccc57f6aba7ae47ff1a44'
-PROPOSAL_SHA = '737a21b09caf9b61982bbcd1669c1bddff6b1d4c34c214312ad08e6f77851d8f'
-COMPOSE_SHA = '94dd36a08d0f95eeb0fc0cb4d768ba5a1fea46b94f3fa77879094ded9cab409c'
-RENDER_SHA = '41df5ac4a7f24032a3be85ad910c1aea5e1e2c0976a20b951f59e52dde4e5f2c'
+PROPOSAL_SHA = '9841ff3bccd351a02202fb809eb902908267f87c827ae443c8c905cf85b7ea02'
+COMPOSE_SHA = 'b8814fdada2da18939c7a02b210117c0239a1e3cfe8c59236f1f683682e5baef'
+RENDER_SHA = '5e581a5f0aa86be271afa083834b92785ecc477638ea9b0f80925b36514b6239'
 NGINX_CONFIG_SHA = 'f47d59d650c5edc6a6bc3ba1db6f29b4ed12b9e2b96ba11f2177c401ac3e344b'
-REVIEW_AT = '2026-10-10T18:00:00Z'
+REVIEW_AT = '2026-10-11T12:00:00Z'
 EXPIRES_AT = '2026-10-14T18:00:00Z'
 DB_INVENTORY_SHA = '997afaf11a412ce6942fb0ad8f3aba0458e3784b25039e714c3598864ad61426'
-DB_METADATA_SHA = 'd441f7570466a3888588580504c4576a3a38c3b36ddbb1a5a7cabd0f8101f76c'
+DB_METADATA_SHA = 'ffaec9a63590dcd467fbb7d88b4ab35c8353d808ef5df64bb63a3a5b9a5d3d81'
 GO_MODULES = {'github.com/tianon/gosu': 'v1.19.0', 'github.com/moby/sys/user': 'v0.1.0',
               'golang.org/x/sys': 'v0.1.0', 'stdlib': 'v1.24.6'}
 COMPONENTS = {
     'app': ('release-evidence-37186347292-1',
             '2ba0682875e5c6e2ae810d3c737ffc3ac9b89cd57069c48567dc46d2724c8270',
             nginx.FPM_REF, nginx.FPM_SHA, 37186347292),
-    'nginx': ('nginx-release-evidence-37657981977-1',
-              '34894e1fe793af53f4d9a9480a70158d5bebb6409185d153d192055f8d283b9c',
-              nginx.IMAGE + '@sha256:16699f0b601082faf0c60750a20128d024788f35675831afd80a9081493bb3d9',
-              'd2651b5e9c265b58703abc3eb1ec2b88b19c1852', 37657981977)}
+    'nginx': ('nginx-tiff-publication-20261010/release-evidence',
+              '71c01dd5ca3f76310ab1a67d568a4044bcc75bfbb47ad9ac1c070ee1b87131a9',
+              nginx.IMAGE + '@sha256:a8eeb20f935ef074537bdafe1151dae2892ce381f97305edc448af1647a061f4',
+              '2b7abac451afb0ce74aae735fe8b62d5ce171b41', 38053603034)}
 
 
 def timestamp(value):
@@ -178,7 +178,7 @@ def validate_compose(path, rendered, nginx_config):
             'network_runtime_isolation': 'UNKNOWN'}
 
 
-def component(root, kind):
+def component(root, kind, now):
     directory, digest, image, sha, run = COMPONENTS[kind]
     evidence = root / directory
     release = checked(evidence / 'release.json', digest)
@@ -189,57 +189,77 @@ def component(root, kind):
         checked(within(evidence, name), expected) if name.endswith('.json') else require(
             hashlib.sha256(within(evidence, name).read_bytes()).hexdigest() == expected, 'component evidence changed')
     load = lambda name: shared.load(evidence / name)
-    # Reproduce historical acceptance at its archived DB download time; this is NOT a fresh runtime scan.
-    at = timestamp(load('db.json')['DownloadedAt'])
+    # Bind fresh PHP evidence to the original inventory/SBOM; Nginx publication is still current.
+    fresh = root / 'published-readiness-20261010'
+    report = shared.load(fresh / 'app-scan.json') if kind == 'app' else load('scan.json')
+    db = shared.load(fresh / 'app-scan-db.json') if kind == 'app' else load('db.json')
+    recent(report['CreatedAt'], now)
     validator = shared.validate_image if kind == 'app' else nginx.validate_image
     validator((evidence / 'registry-manifest.json').read_bytes(), image.split('@')[1],
-              load('image.json'), load('scan.json'), load('inventory.json'), load('db.json'),
-              load('sbom.cdx.json'), sha, at)
+              load('image.json'), report, load('inventory.json'), db,
+              load('sbom.cdx.json'), sha, now)
     if kind == 'nginx':
-        nginx.candidate(evidence, sha, at)
+        nginx.candidate(evidence, sha, now)
         require(shared.preflight(load('branch.json'), load('runs.json'), sha, 'refs/heads/main') == load('ci.json'),
                 'Nginx CI provenance changed')
     return {'image': image, 'source_commit': sha, 'release_run': release['release_run'],
-            'release_sha256': digest, 'release_acceptance': 'HISTORICAL_VERIFIED',
-            'fresh_runtime_rescan': 'PENDING'}
+            'release_sha256': digest, 'release_acceptance': 'VERIFIED_WITH_CURRENT_SCAN',
+            'fresh_scan_checked_at': now.isoformat(), 'rescan_before_runtime': 'REQUIRED'}
+
+
+def validate_records(root, refresh, policy, now):
+    recent(refresh['checked_at'], now)
+    require(refresh['status'] == 'PASS_OFFICIAL_RECORD_REFRESH_ONLY_NO_RISK_ACCEPTANCE',
+            'missing official Go record refresh')
+    all_records, blocking = {}, {}
+    for entry in refresh['records']:
+        require(entry['cve'] not in all_records and entry['unchanged_from_9Oct'] is True
+                and entry['withdrawn'] is None, 'changed/duplicate/withdrawn Go record')
+        raw = checked(within(root, 'go-records/' + entry['go_id'] + '.json'), entry['sha256'])
+        require(raw['id'] == entry['go_id'] and entry['cve'] in raw['aliases']
+                and raw.get('withdrawn') is None and raw['modified'] == entry['modified'], 'Go record identity changed')
+        severity = entry['current_severity']
+        require(severity in ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL', 'UNKNOWN')
+                and entry['currently_blocking'] is (severity in ('HIGH', 'CRITICAL', 'UNKNOWN')),
+                'Go record severity classification changed')
+        all_records[entry['cve']] = entry['go_id']
+        if entry['currently_blocking']:
+            blocking[entry['cve']] = (entry['go_id'], entry['sha256'], severity)
+    expected = {f['id']: (f['go_id'], f['record_sha256'], f['severity']) for f in policy['findings']}
+    require(len(expected) == len(policy['findings']) and blocking == expected and blocking,
+            'incomplete accepted Go record mapping')
+    return {'refreshed_records': len(all_records), 'accepted_records': len(blocking)}
 
 
 def evaluate(root, authority_path, authority_sha, compose, rendered, nginx_config, now):
     authority = checked(authority_path, authority_sha)
     validate_authority(authority, now)
-    preflight = root / 'staging-preflight-20261007'
-    policy = checked(preflight / 'mariadb-disposition.proposed.json', PROPOSAL_SHA)
-    for name, digest in policy['evidence_sha256'].items(): checked(within(root, name), digest)
-    refresh = shared.load(preflight / 'go-record-refresh.json')
-    recent(refresh['checked_at'], now)
-    require(refresh['status'] == 'PASS' and len(refresh['records']) == len(policy['findings']), 'missing Go record refresh')
-    records = {}
-    for entry in refresh['records']:
-        require(entry['cve'] not in records and entry['unchanged_from_reviewed_record'] is True
-                and entry['withdrawn'] is None, 'changed/duplicate/withdrawn Go record')
-        raw = checked(within(preflight, 'go-records/' + entry['go_id'] + '.json'), entry['raw_sha256'])
-        require(raw['id'] == entry['go_id'] and entry['cve'] in raw['aliases']
-                and raw.get('withdrawn') is None and raw['modified'] == entry['modified'], 'Go record identity changed')
-        records[entry['cve']] = entry['go_id']
-    require(records == {f['id']: f['go_id'] for f in policy['findings']}, 'incomplete Go record mapping')
-    manifest = (preflight / '11.4.13-noble-arm64-manifest.json').read_bytes()
+    preflight = root / 'published-readiness-20261010'
+    policy = checked(preflight / 'mariadb-30-disposition.proposed.json', PROPOSAL_SHA)
+    # Some evidence files are JSON streams, not single JSON objects.
+    for name, digest in policy['evidence_sha256'].items():
+        require(hashlib.sha256(within(preflight, name).read_bytes()).hexdigest() == digest,
+                'disposition evidence changed')
+    records = validate_records(preflight, shared.load(preflight / 'go-record-refresh.json'), policy, now)
+    recent(shared.load(preflight / 'applicability/execution.json')['checked_at'], now)
+    manifest = (preflight / 'db-live-manifest.json').read_bytes()
     require('sha256:' + hashlib.sha256(manifest).hexdigest() == DB_REF.split('@')[1]
             and json.loads(manifest)['config']['digest'] == DB_CONFIG, 'DB registry leaf/config mismatch')
-    index_raw = (preflight / '11.4.13-noble-index.json').read_bytes()
+    index_raw = (preflight / 'db-live-index.json').read_bytes()
     require('sha256:' + hashlib.sha256(index_raw).hexdigest() == DB_INDEX, 'DB index changed')
     leaves = [m for m in json.loads(index_raw)['manifests'] if m.get('platform', {}).get('os') == 'linux'
               and m.get('platform', {}).get('architecture') == 'arm64']
     require(len(leaves) == 1 and leaves[0]['digest'] == DB_REF.split('@')[1], 'ambiguous/wrong ARM64 leaf')
-    db = validate_db(shared.load(preflight / '11.4.13-noble-scan.json'),
-                     checked(preflight / 'noble-installed-inventory.json', DB_INVENTORY_SHA),
-                     checked(preflight / '11.4.13-noble-scan-db.json', DB_METADATA_SHA), policy, now)
+    db = validate_db(shared.load(preflight / 'db-scan.json'),
+                     checked(root / 'staging-preflight-20261007/noble-installed-inventory.json', DB_INVENTORY_SHA),
+                     checked(preflight / 'db-scan-db.json', DB_METADATA_SHA), policy, now)
     config = validate_compose(compose, shared.load(rendered), nginx_config)
     return {'schema_version': 1, 'status': 'LOCAL_STAGING_CANDIDATE_WITH_ACCEPTED_DISPOSITION',
             'checked_at': now.isoformat(), 'authority_sha256': authority_sha, 'proposal_sha256': PROPOSAL_SHA,
-            'components': {kind: component(root, kind) for kind in COMPONENTS},
+            'components': {kind: component(root, kind, now) for kind in COMPONENTS},
             'db': {'image': DB_REF, **db, 'review_at': REVIEW_AT, 'expires_at': EXPIRES_AT},
-            'configuration': config, 'staging_deployable': False, 'production': 'HOLD',
-            'pending': ['Fresh PHP/Nginx/DB scans and host capacity before execution',
+            'go_record_coverage': records, 'configuration': config, 'staging_deployable': False, 'production': 'HOLD',
+            'pending': ['Recheck PHP/Nginx/DB scans and host capacity before execution',
                         'Separate runtime provisioning and DB initialization authority',
                         'Coolify adapter, fresh volumes, private route and literal mounted config',
                         'Runtime egress boundary, application/DB/browser and persistence acceptance']}

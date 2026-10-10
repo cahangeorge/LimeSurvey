@@ -16,7 +16,7 @@ The Dockerfile pins module versions/checksums, uses local toolchain, static ARM6
 `-trimpath`, `-ldflags '-d -w'`, `-buildvcs=false` and `-mod=readonly`.
 Go omits linker flags from build metadata when `-trimpath` is set; the ELF
 symbol table must remain present to reject `-s`, while the reviewed Dockerfile
-binds the exact linker flags. The main module may be `(devel)` because the source comes from an archive.
+binds the exact linker flags. The main module is `(devel)` because the source comes from an archive.
 Compiler, exact dependency identities, binary hash, source pin and gosu version
 remain mandatory. The Go 1.26 module directive compiled by Go 1.27.2 also
 requires the exact build setting
@@ -43,6 +43,17 @@ A missing, failed, skipped or cancelled database job blocks the aggregate gate.
 Trivy 0.75.0 is checksum pinned. Raw all-package candidate scan plus fresh database
 metadata must pass before registry authentication. Exactly one Ubuntu 24.04 and
 one gosu binary scan cover installed OS packages and Go compiler/dependencies.
+Pinned Trivy 0.75.0 reports exactly four Go records: the archive-built root
+`github.com/tianon/gosu` has no `Version` field and the exact versionless PURL
+`pkg:golang/github.com/tianon/gosu`; stdlib and both dependencies retain exact
+versions. This single root must have its exact ID/name, `Relationship=root`, and
+three exact `DependsOn` IDs. The binary `(devel)` module, actual gosu 1.19,
+source/archive pins, compiler/dependency metadata and binary hash bind its
+identity. No synthetic version is inserted and no dependency may omit a version.
+CycloneDX likewise preserves the versionless root library, exact PURL/bom-ref,
+Trivy package ID/type properties and the three exact dependency PURL links.
+Missing, duplicate or substituted roots/dependency links fail. The release
+summary reports all four validated Go packages.
 Package version/PURL coverage must agree; HIGH, CRITICAL, UNKNOWN, absent severity,
 missing coverage and malformed evidence block. No ignore, VEX or ignore-unfixed
 exception is allowed. The final digest is scanned independently, its installed

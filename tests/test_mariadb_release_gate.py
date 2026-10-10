@@ -140,9 +140,12 @@ class MariaDBTests(unittest.TestCase):
         inventory['gosu']['entrypoint_sha256'] = 'c' * 64
         packages = [{'Name': 'mariadb-server', 'Version': '11.4.13', 'Epoch': 1, 'Release': '1', 'Arch': 'arm64',
                      'Identifier': {'PURL': 'pkg:deb/ubuntu/mariadb-server@11.4.13-1?arch=arm64&distro=ubuntu-24.04&epoch=1'}}]
-        go = [{'Name': name, 'Version': value[0], 'Identifier': {'PURL': 'pkg:golang/' + name + '@' + value[0]}}
+        go = [{'ID': name + '@' + value[0], 'Name': name, 'Version': value[0], 'Identifier': {'PURL': 'pkg:golang/' + name + '@' + value[0]}}
               for name, value in gate.MODULES.items()]
-        go.append({'Name': 'stdlib', 'Version': 'v1.27.2', 'Identifier': {'PURL': 'pkg:golang/stdlib@v1.27.2'}})
+        go.append({'ID': 'github.com/tianon/gosu', 'Name': 'github.com/tianon/gosu',
+                   'Identifier': {'PURL': 'pkg:golang/github.com/tianon/gosu'}, 'Relationship': 'root',
+                   'DependsOn': ['github.com/moby/sys/user@v0.4.1', 'golang.org/x/sys@v0.49.0', 'stdlib@v1.27.2']})
+        go.append({'ID': 'stdlib@v1.27.2', 'Name': 'stdlib', 'Version': 'v1.27.2', 'Identifier': {'PURL': 'pkg:golang/stdlib@v1.27.2'}})
         report = {'SchemaVersion': 2, 'ArtifactName': '/owned/candidate.tar', 'ArtifactType': 'container_image',
                   'ArtifactID': image_id, 'Trivy': {'Version': '0.75.0'},
                   'Metadata': {'ImageID': image_id, 'ImageConfig': {'architecture': 'arm64', 'os': 'linux'},
@@ -157,10 +160,46 @@ class MariaDBTests(unittest.TestCase):
 
     def test_complete_os_compiler_dependency_scan_coverage(self):
         inventory, report, db, now = self.fixtures()
-        self.assertEqual(len(self.scan(inventory, report, db, now)), 4)
-        report['Results'][1]['Packages'].append({'Name': 'github.com/tianon/gosu', 'Version': '(devel)',
-            'Identifier': {'PURL': 'pkg:golang/github.com/tianon/gosu@(devel)'}})
         self.assertEqual(len(self.scan(inventory, report, db, now)), 5)
+        root = next(p for p in report['Results'][1]['Packages'] if p['Name'] == 'github.com/tianon/gosu')
+        root['Version'] = '(devel)'
+        with self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+
+    def test_versionless_archive_root_is_unique_and_strictly_bound(self):
+        mutations = [lambda p: p.update(ID='other'), lambda p: p.update(Name='other'),
+                     lambda p: p.update(Version=None), lambda p: p.update(Version=''),
+                     lambda p: p.update(Relationship='direct'),
+                     lambda p: p['Identifier'].update(PURL='pkg:golang/github.com/tianon/gosu@(devel)'),
+                     lambda p: p.update(DependsOn=[]),
+                     lambda p: p.update(DependsOn=['stdlib@v1.27.2'] * 3),
+                     lambda p: p['DependsOn'].append('unknown@v1'),
+                     lambda p: p['DependsOn'].__setitem__(0, 'github.com/moby/sys/user@v0.4.0')]
+        for mutate in mutations:
+            inventory, report, db, now = self.fixtures()
+            root = next(p for p in report['Results'][1]['Packages'] if p['Name'] == 'github.com/tianon/gosu')
+            mutate(root)
+            with self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+        for missing in ('github.com/tianon/gosu', 'stdlib', 'github.com/moby/sys/user', 'golang.org/x/sys'):
+            inventory, report, db, now = self.fixtures()
+            packages = report['Results'][1]['Packages']
+            packages[:] = [p for p in packages if p['Name'] != missing]
+            with self.subTest(missing=missing), self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+        for name in ('stdlib', 'github.com/moby/sys/user', 'golang.org/x/sys'):
+            inventory, report, db, now = self.fixtures()
+            package = next(p for p in report['Results'][1]['Packages'] if p['Name'] == name)
+            package['ID'] = 'substituted'
+            with self.subTest(name=name, wrong_id=True), self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+            for version in (None, ''):
+                inventory, report, db, now = self.fixtures()
+                package = next(p for p in report['Results'][1]['Packages'] if p['Name'] == name)
+                if version is None: del package['Version']
+                else: package['Version'] = version
+                with self.subTest(name=name, missing_version=version), self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+        inventory, report, db, now = self.fixtures()
+        packages = report['Results'][1]['Packages']; packages.append(copy.deepcopy(next(p for p in packages if p['Name'] == 'github.com/tianon/gosu')))
+        with self.assertRaises(ValueError): self.scan(inventory, report, db, now)
+        inventory, report, db, now = self.fixtures(); inventory['gosu']['main'] = 'v1.19'
+        with self.assertRaises(ValueError): self.scan(inventory, report, db, now)
 
     def test_gated_severities_and_missing_severity_fail(self):
         for severity in ('HIGH', 'CRITICAL', 'UNKNOWN', None, ''):
@@ -216,8 +255,13 @@ class MariaDBTests(unittest.TestCase):
         components = []
         for result in report['Results']:
             for pkg in result['Packages']:
-                purl = pkg['Identifier']['PURL']; version = '1:11.4.13-1' if pkg['Name'] == 'mariadb-server' else pkg['Version']
-                components.append({'type': 'library', 'name': pkg['Name'], 'version': version, 'purl': purl, 'bom-ref': purl})
+                purl = pkg['Identifier']['PURL']
+                component = {'type': 'library', 'name': pkg['Name'], 'purl': purl, 'bom-ref': purl}
+                if pkg['Name'] == 'github.com/tianon/gosu':
+                    component['properties'] = [{'name': 'aquasecurity:trivy:PkgID', 'value': pkg['Name']},
+                                               {'name': 'aquasecurity:trivy:PkgType', 'value': 'gobinary'}]
+                else: component['version'] = '1:11.4.13-1' if pkg['Name'] == 'mariadb-server' else pkg['Version']
+                components.append(component)
         components.append({'type': 'application', 'name': 'usr/local/bin/gosu', 'properties': [
             {'name': 'aquasecurity:trivy:Class', 'value': 'lang-pkgs'}, {'name': 'aquasecurity:trivy:Type', 'value': 'gobinary'}]})
         ci = {'id': 1, 'run_attempt': 1, 'head_sha': sha, 'event': 'push', 'path': '.github/workflows/release-gate.yml'}
@@ -230,7 +274,9 @@ class MariaDBTests(unittest.TestCase):
             'regression.json': {'status': 'PASS', 'cleanup': True, 'image_id': inventory['image_id'], 'binary_sha256': 'a' * 64, 'checks': list(gate.REGRESSION_CHECKS)},
             'branch.json': {'protected': True, 'commit': {'sha': sha}}, 'runs.json': {'workflow_runs': [run]}, 'ci.json': ci,
             'sbom.cdx.json': {'bomFormat': 'CycloneDX', 'specVersion': '1.7', 'metadata': {'component': {'type': 'container', 'name': ref,
-                 'properties': [{'name': 'aquasecurity:trivy:ImageID', 'value': inventory['image_id']}]}}, 'components': components}}
+                 'properties': [{'name': 'aquasecurity:trivy:ImageID', 'value': inventory['image_id']}]}}, 'components': components,
+                 'dependencies': [{'ref': 'pkg:golang/github.com/tianon/gosu', 'dependsOn': [
+                     'pkg:golang/github.com/moby/sys/user@v0.4.1', 'pkg:golang/golang.org/x/sys@v0.49.0', 'pkg:golang/stdlib@v1.27.2']}]}}
         for name, value in files.items(): (root / name).write_text(json.dumps(value))
         (root / 'registry-manifest.json').write_bytes(raw)
         return digest, sha, now
@@ -242,6 +288,7 @@ class MariaDBTests(unittest.TestCase):
             self.assertEqual(result['status'], 'DATABASE_ARTIFACT_VERIFIED')
             self.assertIn('regression.json', result['evidence_sha256'])
             self.assertEqual(result['parent'], gate.BASE)
+            self.assertEqual(result['scan']['go_packages'], 4)
             with self.assertRaises(ValueError): gate.manifest(root, digest, 'e' * 40, 123, 1, now)
             self.assertFalse((root / 'release.json').exists())
 
@@ -259,6 +306,24 @@ class MariaDBTests(unittest.TestCase):
                 root = Path(directory); digest, sha, now = self.release_fixture(root)
                 value = json.loads((root / filename).read_text()); mutate(value); (root / filename).write_text(json.dumps(value))
                 with self.subTest(filename=filename), self.assertRaises(ValueError): gate.manifest(root, digest, sha, 123, 1, now)
+                self.assertFalse((root / 'release.json').exists())
+
+    def test_sbom_versionless_root_and_dependency_links_are_exact(self):
+        mutations = [lambda s, r: r.update(version='(devel)'), lambda s, r: r.update(version=None),
+                     lambda s, r: r.update(name='other'), lambda s, r: r.update(purl='pkg:golang/other'),
+                     lambda s, r: r.update(properties=[]), lambda s, r: s['components'].append(copy.deepcopy(r)),
+                     lambda s, r: s.pop('dependencies'), lambda s, r: s['dependencies'].clear(),
+                     lambda s, r: s['dependencies'].append(copy.deepcopy(s['dependencies'][0])),
+                     lambda s, r: s['dependencies'][0].update(dependsOn=['pkg:golang/stdlib@v1.27.2'] * 3),
+                     lambda s, r: s['dependencies'][0]['dependsOn'].__setitem__(0, 'pkg:golang/github.com/moby/sys/user@v0.4.0'),
+                     lambda s, r: next(p for p in s['components'] if p.get('name') == 'stdlib').pop('version')]
+        for mutate in mutations:
+            with tempfile.TemporaryDirectory() as directory:
+                root = Path(directory); digest, sha, now = self.release_fixture(root)
+                sbom = json.loads((root / 'sbom.cdx.json').read_text())
+                archive = next(p for p in sbom['components'] if p.get('name') == 'github.com/tianon/gosu')
+                mutate(sbom, archive); (root / 'sbom.cdx.json').write_text(json.dumps(sbom))
+                with self.assertRaises(ValueError): gate.manifest(root, digest, sha, 123, 1, now)
                 self.assertFalse((root / 'release.json').exists())
 
     def test_runtime_failure_captures_stderr_and_never_writes_pass(self):

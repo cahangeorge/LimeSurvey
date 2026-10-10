@@ -283,9 +283,9 @@ def regression(image, directory):
                 for _ in range(60):
                     try:
                         # The initialization shell's temporary SQL server is not readiness.
-                        comm = docker('exec', container, 'cat', '/proc/1/comm')
-                        executable = docker('exec', '--user', '0', container, 'readlink', '/proc/1/exe')
-                        status = docker('exec', container, 'cat', '/proc/1/status')
+                        comm = docker('exec', '--user', uid + ':' + gid, container, 'cat', '/proc/1/comm')
+                        executable = docker('exec', '--user', uid + ':' + gid, container, 'readlink', '/proc/1/exe')
+                        status = docker('exec', '--user', uid + ':' + gid, container, 'cat', '/proc/1/status')
                         if not daemon_ready(comm, executable, status, uid):
                             time.sleep(2)
                             continue

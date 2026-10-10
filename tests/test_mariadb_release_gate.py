@@ -62,6 +62,22 @@ class MariaDBTests(unittest.TestCase):
         parent['RepoDigests'] = ['other@sha256:' + 'b' * 64]
         with self.assertRaises(ValueError): gate.validate_parent([parent], child)
 
+    def test_parent_digest_allows_only_exact_official_full_and_familiar_names(self):
+        parent = {'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'arm64',
+                  'RepoDigests': [gate.BASE], 'Config': {'Labels': {}},
+                  'RootFS': {'Layers': ['sha256:' + 'b' * 64]}}
+        child = copy.deepcopy(parent); child['RootFS']['Layers'].append('sha256:' + 'c' * 64)
+        familiar = 'mariadb@' + gate.BASE.split('@')[1]
+        for refs in ([gate.BASE], [familiar], [gate.BASE, familiar]):
+            parent['RepoDigests'] = refs
+            with self.subTest(valid=refs): gate.validate_parent([parent], child)
+        for refs in (None, [], gate.BASE, {'digest': gate.BASE}, [None], [17],
+                     ['other@' + gate.BASE.split('@')[1]], ['ghcr.io/library/mariadb@' + gate.BASE.split('@')[1]],
+                     ['docker.io/other/mariadb@' + gate.BASE.split('@')[1]], ['mariadb@sha256:' + 'e' * 64],
+                     [gate.BASE, 'other@' + gate.BASE.split('@')[1]], [gate.BASE, gate.BASE]):
+            parent['RepoDigests'] = refs
+            with self.subTest(invalid=refs), self.assertRaises(ValueError): gate.validate_parent([parent], child)
+
     def test_parent_and_child_require_complete_valid_single_copy_layer_chain(self):
         parent = {'Id': 'sha256:' + 'b' * 64, 'Os': 'linux', 'Architecture': 'arm64',
                   'RepoDigests': [gate.BASE], 'Config': {'Labels': {}},

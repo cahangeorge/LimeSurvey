@@ -20,6 +20,7 @@ shared = importlib.util.module_from_spec(_spec); _spec.loader.exec_module(shared
 require = shared.require
 IMAGE = 'ghcr.io/cahangeorge/limesurvey-mariadb'
 BASE = 'docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39'
+BASE_ALIASES = frozenset((BASE, 'mariadb@' + BASE.split('@')[1]))
 BUILDER = 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d'
 GOSU_SHA = '6456aaa0f3c854d199d0f037f068eb97515b7513'
 ARCHIVE = '33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b'
@@ -69,8 +70,12 @@ def validate_regression(proof, image_id, build):
 
 
 def validate_parent(parent, image):
-    require(isinstance(parent, list) and len(parent) == 1 and BASE in parent[0].get('RepoDigests', [])
+    require(isinstance(parent, list) and len(parent) == 1 and isinstance(parent[0], dict)
             and parent[0].get('Os') == 'linux' and parent[0].get('Architecture') == 'arm64', 'unapproved parent image')
+    references = parent[0].get('RepoDigests')
+    require(isinstance(references, list) and references
+            and all(isinstance(ref, str) and ref in BASE_ALIASES for ref in references)
+            and len(references) == len(set(references)), 'unapproved or malformed parent references')
     identity(parent[0]['Id'])
     # All runtime configuration is preserved except wrapper labels.
     left = {k: v for k, v in parent[0]['Config'].items() if k != 'Labels'}

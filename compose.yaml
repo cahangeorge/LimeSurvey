@@ -35,11 +35,11 @@ services:
       RESEND_FROM_NAME: ${RESEND_FROM_NAME:-}
     volumes:
       - app-code-v7-5-0:/var/www/html
-      - app-config:/var/www/html/application/config
+      - app-config-v7-5-0:/var/www/html/application/config
       - app-upload:/var/www/html/upload
-      - app-plugins:/var/www/html/plugins
-      - app-themes:/var/www/html/themes
-      - app-runtime:/var/www/html/tmp
+      - app-plugins-v7-5-0:/var/www/html/plugins
+      - app-themes-v7-5-0:/var/www/html/themes
+      - app-runtime-v7-5-0:/var/www/html/tmp
     networks:
       - backend
       - egress
@@ -61,9 +61,9 @@ services:
       - ./docker/nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
       - app-code-v7-5-0:/var/www/html:ro
       - app-upload:/var/www/html/upload:ro
-      - app-plugins:/var/www/html/plugins:ro
-      - app-themes:/var/www/html/themes:ro
-      - app-runtime:/var/www/html/tmp:ro
+      - app-plugins-v7-5-0:/var/www/html/plugins:ro
+      - app-themes-v7-5-0:/var/www/html/themes:ro
+      - app-runtime-v7-5-0:/var/www/html/tmp:ro
     tmpfs:
       - /var/cache/nginx
       - /var/run
@@ -85,11 +85,11 @@ services:
 volumes:
   db-data:
   app-code-v7-5-0:
-  app-config:
+  app-config-v7-5-0:
   app-upload:
-  app-plugins:
-  app-themes:
-  app-runtime:
+  app-plugins-v7-5-0:
+  app-themes-v7-5-0:
+  app-runtime-v7-5-0:
 
 networks:
   frontend:

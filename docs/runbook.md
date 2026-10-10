@@ -195,7 +195,7 @@ Restore the application archive only into fresh or deliberately selected volumes
 ## 8. Upgrade
 
 1. Review the LimeSurvey release notes and database migration requirements.
-2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned `app-code-*` volume name in one reviewed change.
+2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
 3. Run the full local gate, dependency/secret review, and native ARM64 build.
 4. Produce and restore-test a fresh production backup.
 5. Deploy in a maintenance window, verify database migrations, browser behavior, plugin availability, persistence, and a Resend test delivery.
@@ -203,11 +203,40 @@ Restore the application archive only into fresh or deliberately selected volumes
 
 For the current `7.5.0+261001` candidate, the source archive checksum is
 `88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493` and the
-required schema is 717. A fresh `app-code-v7-5-0` volume is necessary: a populated
-old full-code volume hides image updates. Operational code volumes must identify
-the accepted app digest. Config/uploads/custom plugin/theme state stays separate;
-review any old upstream plugin/theme files that persistent mounts would mask.
-Preserve custom content and backup before changing it.
+required schema is 717. Fresh `app-code-v7-5-0`, `app-config-v7-5-0`,
+`app-plugins-v7-5-0`, `app-themes-v7-5-0` and `app-runtime-v7-5-0` volumes are
+necessary: populated mounts hide new application files, including upstream
+plugins/themes, `version.php`, configuration defaults and compiled runtime caches.
+Operational volumes containing upstream files must identify the accepted app
+digest and be seeded from that exact image. Database and upload volume names stay
+unchanged. Previous volumes are retained; never run `down --volumes` on an upgrade.
+
+Before starting an upgraded application against an existing database, stop public
+traffic and application writers, complete the paired DB/files backup and isolated
+restore proof, then seed fresh volumes with the new image. Restore the reviewed private
+`application/config/config.php` settings and the original private
+`application/config/security.php` into the fresh config volume before any app or
+CLI execution. Preserve `security.php` byte-for-byte: it contains encryption keys
+and nonces required to read existing encrypted database records. Missing original
+keys for encrypted data block the upgrade; never generate replacements. Reconcile
+private settings with new defaults, verify connection settings and existing-data
+decryption privately, and never log keys or decrypted records. Inventory other
+operator-owned configuration additions and preserve/reconcile each reviewed file,
+including `application/config/allowed_hosts.php` when present; absence must not
+silently relax an existing host allowlist. Verify the accepted hosts before
+restoring traffic. Never overlay the old full config directory or old
+`version.php`/`config-defaults.php`. Missing private configuration is an upgrade
+blocker, not permission to expose or run the installer against an existing DB.
+
+Inventory old plugin/theme volumes and migrate only reviewed custom additions
+into their matching fresh volumes. Do not restore old upstream plugin/theme
+folders over new defaults; check custom plugin compatibility and custom theme
+inheritance against 7.5. Keep the new runtime/cache volume fresh. Verify the
+selected image's version, schema metadata, upstream plugin/theme files and private
+config placement before the serialized migration. A full old application-volume
+archive is for paired recovery with the old image/database, not for overlaying the
+new release. The development Compose file alone is not a production upgrade
+procedure; use the reviewed private operational adapter and migration helper.
 
 The supported schema 712 → 717 command is `updatedb` in the pinned console
 entrypoint. It has no dry-run, writes DSN/SQL-bearing output, and does not

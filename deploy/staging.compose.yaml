@@ -58,7 +58,7 @@ services:
     read_only: true
     volumes:
       - type: bind
-        source: ${DELIVERY_REPOSITORY_ROOT:?required}/docker/nginx/default.conf
+        source: ./docker/nginx/default.conf
         target: /etc/nginx/conf.d/default.conf
         read_only: true
       - app-code:/var/www/html:ro

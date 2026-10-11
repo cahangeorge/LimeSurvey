@@ -711,6 +711,17 @@ def proxy_identity(plan):
     return expected['Id']
 
 
+def same_mounts(actual, expected):
+    """Docker inspect mount order is unstable; every mount field remains exact."""
+    def canonical(mounts):
+        require(isinstance(mounts, list) and all(isinstance(mount, dict) for mount in mounts))
+        destinations = [mount.get('Destination') for mount in mounts]
+        require(all(isinstance(path, str) and path for path in destinations)
+                and len(destinations) == len(set(destinations)))
+        return sorted(json.dumps(mount, sort_keys=True, separators=(',', ':')) for mount in mounts)
+    return canonical(actual) == canonical(expected)
+
+
 def legacy_state(plan, running=True):
     ids = docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=' + plan['application_uuid']).decode().split()
     require(set(ids) == {item['Id'] for item in plan['_legacy'].values()})
@@ -718,7 +729,7 @@ def legacy_state(plan, running=True):
     for item in actual:
         service = item['Config']['Labels']['com.docker.compose.service']; original = plan['_legacy'][service]
         require(item['Id'] == original['Id'] and item['Image'] == original['Image']
-                and item['Mounts'] == original['Mounts'] and item['Config'] == original['Config']
+                and same_mounts(item['Mounts'], original['Mounts']) and item['Config'] == original['Config']
                 and set(item['NetworkSettings']['Networks']) == set(original['NetworkSettings']['Networks']))
         if running: require(item['State']['Running'] is True and item['State'].get('Health', {}).get('Status') == 'healthy')
     proxy_id = proxy_identity(plan)
@@ -1135,7 +1146,7 @@ def legacy_rescue(plan, state):
         db_id = wait_db(plan['application_uuid'])
         inspected = json.loads(docker('inspect', db_id))[0]
         original_db = plan['_legacy']['db']
-        require(inspected['Image'] == original_db['Image'] and inspected['Mounts'] == original_db['Mounts'])
+        require(inspected['Image'] == original_db['Image'] and same_mounts(inspected['Mounts'], original_db['Mounts']))
         require(db_inventory(db_id, state['backup']['inventory']['prefix']) == state['backup']['inventory'])
         expected = {name: state['backup']['files'][name] for name in restore_paths(plan, state['backup']['files'])}
         payload = base64.b64encode(json.dumps(expected).encode()).decode()
@@ -1292,7 +1303,7 @@ def failed_writer_fence(plan, state):
             original = next((legacy[name] for name in ('app', 'nginx') if legacy[name]['Id'] == identifier), None)
             if original:
                 require(item['Image'] == original['Image'] and item['Config'] == original['Config']
-                        and item['Mounts'] == original['Mounts']
+                        and same_mounts(item['Mounts'], original['Mounts'])
                         and set(item['NetworkSettings']['Networks']) == set(original['NetworkSettings']['Networks']))
                 stop = legacy_required
                 if not stop and item['State']['Running'] is True: state['original_traffic_preserved'] = True

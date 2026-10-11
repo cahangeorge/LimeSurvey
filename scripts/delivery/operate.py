@@ -871,7 +871,7 @@ def selected_compose(plan, isolated):
         for key in ('NAME', 'USER', 'PASSWORD', 'ROOT_PASSWORD'):
             source_key = 'MARIADB_DATABASE' if key == 'NAME' else 'MARIADB_' + key
             require(isinstance(existing.get(source_key), str) and existing[source_key])
-            environment['STAGING_DB_' + key] = existing[source_key]
+            environment['STAGING_DB_' + key] = existing[source_key].replace('$$', '$')
         source = json.loads(command(['docker', 'compose', '--project-directory', candidate['repository_root'],
                                      '--project-name', candidate['project'], '--file', str(ROOT / 'deploy/staging.compose.yaml'),
                                      'config', '--format', 'json'], env=environment, timeout=30))
@@ -1018,9 +1018,16 @@ def restore_files(plan, backup, project, repeated=False):
 def migration_postconditions(db_id, before):
     prefix = before['prefix']; after = db_inventory(db_id, prefix)
     require(after['schema'] == 717 and after['permissions'] == before['permissions'])
+    # Pinned updater broadcasts notifications and inserts missing localization rows.
+    # Every other baseline table (including inactive/archived responses) retains its count.
+    insert_only = {prefix + name for name in ('notifications', 'group_l10ns', 'question_l10ns',
+                                             'answer_l10ns', 'assessments', 'quota_languagesettings')}
+    require(set(before['counts']) <= set(after['counts']))
     for table, count in before['counts'].items():
-        if table in before['active_response_tables'] or table in (prefix + 'surveys', prefix + 'users', prefix + 'plugins'):
-            require(after['counts'].get(table) == count)
+        actual = after['counts'][table]
+        if table == prefix + 'permissions': require(actual <= count)
+        elif table in insert_only: require(actual >= count)
+        else: require(actual == count)
     for table in before['active_response_tables']:
         require(database(db_id, 'SELECT COLUMN_TYPE,IS_NULLABLE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME="' + table + '" AND COLUMN_NAME="quota_exit";') == ['int(11)\tYES'])
     for table in (prefix + 'surveys', prefix + 'surveys_groupsettings'):
@@ -1072,18 +1079,28 @@ def migrate_candidate(plan, state, db_id, compose_file, recovery=False):
         docker('start', identifier)
         require(docker('wait', identifier, timeout=300).strip() == b'0')
         state['migration'] = migration_postconditions(db_id, backup['inventory'])
-        checkpoint(plan, state, 'MIGRATION_VERIFIED')
     except Exception:
+        state['updater_stop_verified'] = False
         if identifier and state.get('migration_container') == identifier:
-            docker('stop', '-t', '10', identifier, timeout=30)
-            item = json.loads(docker('inspect', identifier))[0]
-            require(item['Id'] == identifier and item['Config']['Labels'].get(LABEL) == plan['_plan_sha256']
-                    and item['State']['Running'] is False)
+            try:
+                docker('stop', '-t', '10', identifier, timeout=30)
+                item = json.loads(docker('inspect', identifier))[0]
+                require(item['Id'] == identifier and item['Config']['Labels'].get(LABEL) == plan['_plan_sha256']
+                        and item['State']['Running'] is False)
+                state['updater_stop_verified'] = True
+            except Exception: pass
         raise
     finally:
+        original_failure = sys.exc_info()[0] is not None
+        state['migration_log_captured'] = False
         with os.fdopen(descriptor, 'wb') as stream:
             if identifier and state.get('migration_container') == identifier:
-                subprocess.run(['docker', 'logs', identifier], stdout=stream, stderr=stream, timeout=30, check=False)
+                try:
+                    captured = subprocess.run(['docker', 'logs', identifier], stdout=stream, stderr=stream, timeout=30, check=False)
+                    state['migration_log_captured'] = captured.returncode == 0
+                except Exception: pass
+        if not original_failure: require(state['migration_log_captured'])
+    checkpoint(plan, state, 'MIGRATION_VERIFIED')
     # Retain the stopped owned one-off and protected log as migration evidence.
 
 
@@ -1137,17 +1154,55 @@ def legacy_rescue(plan, state):
         raise
 
 
+def production_options(plan, service, item, image, definition):
+    original = plan['_legacy'][service]; host = item['HostConfig']; old_host = original['HostConfig']
+    # These settings are unchanged by selected_compose; use the verified actual predecessor host settings.
+    for key in ('Memory', 'MemoryReservation', 'MemorySwap', 'NanoCpus', 'CpuQuota', 'CpuPeriod', 'CpuShares', 'CpusetCpus',
+                'PidsLimit', 'OomKillDisable', 'OomScoreAdj', 'SecurityOpt', 'CapAdd', 'CapDrop', 'Devices',
+                'DeviceRequests', 'PidMode', 'IpcMode', 'RestartPolicy'):
+        actual, expected = host.get(key), old_host.get(key)
+        if key in ('SecurityOpt', 'CapAdd', 'CapDrop', 'Devices', 'DeviceRequests'): actual, expected = actual or [], expected or []
+        require(actual == expected)
+    require(host.get('ReadonlyRootfs', False) is bool(definition.get('read_only', False)))
+    for field, declared in (('Cmd', 'command'), ('Entrypoint', 'entrypoint'), ('User', 'user'),
+                            ('WorkingDir', 'working_dir'), ('StopSignal', 'stop_signal')):
+        expected = definition.get(declared)
+        if expected is None: expected = image['Config'].get(field)
+        else:
+            # Compose canonical config escapes literal dollars; Docker inspect is already decoded.
+            expected = [value.replace('$$', '$') for value in expected] if isinstance(expected, list) else expected.replace('$$', '$')
+        if field in ('Cmd', 'Entrypoint') and isinstance(expected, str): expected = shlex.split(expected)
+        actual = item['Config'].get(field)
+        if field in ('Cmd', 'Entrypoint'): actual, expected = actual or [], expected or []
+        if field in ('User', 'WorkingDir'): actual, expected = actual or '', expected or ''
+        require(actual == expected)
+    expected_health = original['Config'].get('Healthcheck') if definition.get('healthcheck') else image['Config'].get('Healthcheck')
+    require(item['Config'].get('Healthcheck') == expected_health)
+    expected_env = dict(entry.split('=', 1) for entry in image['Config'].get('Env', []))
+    expected_env.update({key: value.replace('$$', '$') for key, value in definition.get('environment', {}).items()})
+    environment = item['Config'].get('Env', []); actual_env = dict(entry.split('=', 1) for entry in environment)
+    require(len(environment) == len(actual_env) and actual_env == expected_env)
+    ports = item['NetworkSettings']['Ports']; bindings = host.get('PortBindings') or {}
+    if service in ('app', 'db'): require(not any(ports.values()) and not any(bindings.values()))
+    else:
+        require(bindings == (old_host.get('PortBindings') or {}))
+        require({key: value for key, value in ports.items() if value}
+                == {key: value for key, value in original['NetworkSettings']['Ports'].items() if value})
+
+
 def production_runtime(plan, state, fenced=True):
     candidate = plan['_candidate']; candidate_state = load_private(candidate['state_file'])
     owned_resources(candidate, candidate_state)
     identifiers = docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=' + plan['application_uuid']).decode().split()
     require(len(identifiers) == 3)
     actual = json.loads(docker('inspect', *identifiers)); result = {}
+    expected_compose = selected_compose(plan, False)
     for item in actual:
         service = item['Config']['Labels']['com.docker.compose.service']; require(service in IMAGES and service not in result)
         kind = IMAGES[service]; reference = candidate['images'][kind]
         inspected_images = json.loads(docker('image', 'inspect', reference))
         image_identity(candidate, kind, inspected_images); image = inspected_images[0]
+        production_options(plan, service, item, image, expected_compose['services'][service])
         require(item['Image'] == image['Id'] and item['Config']['Image'] == reference
                 and item['Config']['Labels']['com.docker.compose.project'] == plan['application_uuid']
                 and item['State']['Running'] is True and item['State'].get('Health', {}).get('Status') == 'healthy')
@@ -1211,8 +1266,69 @@ def fenced_compose(plan, state):
     return result
 
 
+def failed_writer_fence(plan, state):
+    """Stop only proven transaction writers and report actual stopped-state evidence."""
+    legacy = plan.get('_legacy', {})
+    if not {'app', 'nginx'} <= set(legacy): return False
+    candidate = plan['_candidate']; proven = True
+    legacy_required = state.get('writers_fenced') is True or state.get('status') == 'WRITERS_FENCING'
+    try:
+        existing = set(docker('ps', '-aq').decode().split())
+        identifiers = {legacy[name]['Id'] for name in ('app', 'nginx')} & existing
+        for project in (plan['application_uuid'], candidate['project']):
+            for service in ('app', 'nginx'):
+                identifiers.update(docker('ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project,
+                                          '--filter', 'label=com.docker.compose.service=' + service).decode().split())
+        updater = state.get('migration_container')
+        if updater in existing: identifiers.add(updater)
+    except Exception: return False
+    state['failure_writer_ids'] = []
+    for identifier in sorted(identifiers):
+        try:
+            inspected = json.loads(docker('inspect', identifier)); require(len(inspected) == 1)
+            item = inspected[0]; require(item['Id'] == identifier)
+            original = next((legacy[name] for name in ('app', 'nginx') if legacy[name]['Id'] == identifier), None)
+            if original:
+                require(item['Image'] == original['Image'] and item['Config'] == original['Config']
+                        and item['Mounts'] == original['Mounts']
+                        and set(item['NetworkSettings']['Networks']) == set(original['NetworkSettings']['Networks']))
+                stop = legacy_required
+                if not stop and item['State']['Running'] is True: state['original_traffic_preserved'] = True
+            else:
+                labels = item['Config']['Labels']; project = labels['com.docker.compose.project']
+                service = labels['com.docker.compose.service']
+                if identifier == updater:
+                    require(labels.get(LABEL) == plan['_plan_sha256'] and service == 'migration'
+                            and item['Name'].startswith('/' + candidate['project'] + '-migration-'))
+                    kind = 'php'; expected_volumes = set(VOLUMES) - {'db'}
+                else:
+                    require(project in (plan['application_uuid'], candidate['project']) and service in ('app', 'nginx'))
+                    if project == candidate['project']: require(labels.get(LABEL) == candidate['_manifest_sha256'])
+                    else: require(labels.get(LABEL) in (None, candidate['_manifest_sha256']))
+                    kind = IMAGES[service]
+                    expected_volumes = set(VOLUMES) - {'db'} if service == 'app' else {'code', 'upload', 'plugins', 'themes', 'runtime'}
+                candidate_state = load_private(candidate['state_file']); owned_resources(candidate, candidate_state)
+                images = json.loads(docker('image', 'inspect', candidate['images'][kind]))
+                resolved = image_identity(candidate, kind, images)
+                require(item['Image'] == resolved and item['Config']['Image'] == candidate['images'][kind])
+                mounts = [mount for mount in item['Mounts'] if mount['Type'] == 'volume']; require(len(mounts) == len(expected_volumes))
+                for name in expected_volumes:
+                    require(any(mount['Name'] == candidate['volumes'][name] and mount['Destination'] == VOLUMES[name] for mount in mounts))
+                stop = True
+            if item['State']['Running'] is True and stop:
+                try: docker('stop', '-t', '10', identifier, timeout=30)
+                except Exception: pass
+            verified = json.loads(docker('inspect', identifier)); require(len(verified) == 1 and verified[0]['Id'] == identifier)
+            stopped = verified[0]['State']['Running'] is False
+            state['failure_writer_ids'].append({'id': identifier, 'stopped': stopped})
+            proven = proven and stopped
+        except Exception: proven = False
+    return proven
+
+
 def recovery_transaction(plan, rehearse=False):
     if not rehearse: require(plan.get('rehearsal_receipt') and plan.get('rehearsal_receipt_sha256'))
+    configuration_source(plan['_candidate'], rendered=True)
     directory = Path(plan['directory']); require(not directory.exists() and not Path(plan['state_file']).exists())
     directory.mkdir(mode=0o700)
     state = {'schema_version': 1, 'transaction_id': secrets.token_hex(16), 'plan_sha256': plan['_plan_sha256'],
@@ -1280,6 +1396,8 @@ def recovery_transaction(plan, rehearse=False):
                 and ack.get('images') == candidate['images'] and ack.get('security_sha256') == selected['application/config/security.php'])
         require(ack.get('mail_delivery', 'UNKNOWN') in ('PASS', 'UNKNOWN'))
         state['production_proof'] = ack
+        manifest(Path(plan['candidate_manifest']), plan['candidate_manifest_sha256'])
+        provider_gate(plan)
         # Mark potential publication before removing the barrier. Never discard new writes via legacy rescue.
         state['public_unfenced'] = True; checkpoint(plan, state, 'PUBLIC_UNFENCING')
         save_private(production, selected_compose(plan, False))
@@ -1294,14 +1412,7 @@ def recovery_transaction(plan, rehearse=False):
         return {'status': 'PROMOTED_CORE_VERIFIED', 'mail_delivery': ack.get('mail_delivery', 'UNKNOWN')}
     except Exception:
         # Preserve the failed DB/files and close both ordinary and token-authorized writers.
-        production_path = directory / 'production.compose.private.json'
-        restore_path = directory / 'restore.compose.private.json'
-        state['fence_stop_verified'] = False
-        try:
-            if production_path.exists(): compose(production_path, plan['application_uuid'], 'stop', 'app', 'nginx')
-            if restore_path.exists(): compose(restore_path, plan['_candidate']['project'], 'stop', 'app', 'nginx')
-            state['fence_stop_verified'] = True
-        except Exception: pass
+        state['fence_stop_verified'] = failed_writer_fence(plan, state)
         checkpoint(plan, state, 'FAILED_PRESERVED')
         raise
 

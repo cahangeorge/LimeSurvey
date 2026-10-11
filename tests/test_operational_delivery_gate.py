@@ -557,11 +557,29 @@ class OperationalGateTests(unittest.TestCase):
         with patch.object(gate, 'docker', side_effect=transport):
             with self.assertRaises(gate.GateError): gate.candidate_database(plan, db['Id'])
 
+    def production_source(self, plan):
+        source = {'services': {}, 'networks': {}}
+        for item in self.inspect:
+            service = item['Config']['Labels']['com.docker.compose.service']; kind = gate.IMAGES[service]
+            env = dict(entry.split('=', 1) for entry in item['Config']['Env'])
+            if service != 'app': env = {key: value for key, value in env.items() if not key.startswith('RESEND_')}
+            defaults = dict(entry.split('=', 1) for entry in self.target_images[kind]['Config']['Env'])
+            item['Config']['Env'] = [key + '=' + value for key, value in dict(defaults, **env).items()]
+            networks = plan['_legacy'][service]['NetworkSettings']['Networks']
+            source['networks'].update({name: {'name': name} for name in networks})
+            source['services'][service] = {'networks': {name: {} for name in networks}, 'environment': env,
+                'read_only': item['HostConfig']['ReadonlyRootfs'], 'healthcheck': {'test': item['Config']['Healthcheck']['Test']},
+                'volumes': [{'type': mount['Type'], 'source': mount.get('Name', mount.get('Source')), 'target': mount['Destination'],
+                             'read_only': not mount['RW']} for mount in item['Mounts']]}
+        plan['_source'] = source
+        return plan
+
     def test_production_runtime_uses_real_signed_identity_for_all_three_images(self):
         gate.save_private(self.value['state_file'], self.state)
         for item in self.inspect: item['State']['Running'] = True
         plan = {'_candidate': self.value, 'application_uuid': self.project,
                 '_legacy': {item['Config']['Labels']['com.docker.compose.service']: copy.deepcopy(item) for item in self.inspect}}
+        self.production_source(plan)
         def transport(*args, **kwargs):
             if args[:2] == ('network', 'inspect') and args[2] not in self.resources:
                 name = next(name for name, record in self.resources.items() if record['id'] == args[2])
@@ -586,6 +604,7 @@ class OperationalGateTests(unittest.TestCase):
             if service == 'app': item['NetworkSettings']['Networks'].update(old['NetworkSettings']['Networks'])
             if service == 'nginx': item['NetworkSettings']['Networks'] = copy.deepcopy(old['NetworkSettings']['Networks'])
         plan = {'_candidate': self.value, 'application_uuid': self.project, '_legacy': legacy}
+        self.production_source(plan)
         private = self.value['networks']['backend']; private_id = self.resources[private]['id']
         def transport(*args, **kwargs):
             if args[:3] == ('network', 'inspect', private_id):
@@ -608,6 +627,93 @@ class OperationalGateTests(unittest.TestCase):
             return self.docker(*args, **kwargs)
         with patch.object(gate, 'docker', side_effect=foreign_member):
             with self.assertRaises(gate.GateError): gate.production_runtime(plan, {}, fenced=False)
+
+    def test_production_options_reject_execution_security_port_and_readonly_mutations(self):
+        gate.save_private(self.value['state_file'], self.state)
+        for item in self.inspect: item['State']['Running'] = True
+        plan = {'_candidate': self.value, 'application_uuid': self.project,
+                '_legacy': {item['Config']['Labels']['com.docker.compose.service']: copy.deepcopy(item) for item in self.inspect}}
+        self.production_source(plan); baseline = copy.deepcopy(self.inspect)
+        def transport(*args, **kwargs):
+            if args[:2] == ('network', 'inspect') and args[2] not in self.resources:
+                name = next(name for name, record in self.resources.items() if record['id'] == args[2])
+                return self.docker('network', 'inspect', name)
+            return self.docker(*args, **kwargs)
+        with patch.object(gate, 'docker', side_effect=transport): gate.production_runtime(plan, {}, fenced=False)
+        for mutation in ('command', 'security', 'fpm-port', 'readonly', 'unexpected-env'):
+            self.inspect = copy.deepcopy(baseline)
+            app = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'app')
+            nginx = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'nginx')
+            if mutation == 'command': app['Config']['Cmd'] = ['unexpected-command']
+            if mutation == 'security': app['HostConfig']['SecurityOpt'] = ['seccomp=unconfined']
+            if mutation == 'fpm-port': app['NetworkSettings']['Ports'] = {'9000/tcp': [{'HostIp': '0.0.0.0', 'HostPort': '9000'}]}
+            if mutation == 'readonly': nginx['HostConfig']['ReadonlyRootfs'] = False
+            if mutation == 'unexpected-env': app['Config']['Env'].append('UNREVIEWED_PROVIDER_OPTION=enabled')
+            with self.subTest(mutation=mutation), patch.object(gate, 'docker', side_effect=transport):
+                with self.assertRaises(gate.GateError): gate.production_runtime(plan, {}, fenced=False)
+
+    def test_production_inherits_new_image_defaults_and_honors_declared_overrides(self):
+        app = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'app')
+        plan = {'_legacy': {'app': copy.deepcopy(app)}}
+        image = copy.deepcopy(self.target_images['php']); image['Config']['Cmd'] = ['new-native-default']
+        app['Config']['Cmd'] = ['new-native-default']; app['Config']['Env'] = image['Config']['Env'][:]
+        definition = {'healthcheck': {'test': app['Config']['Healthcheck']['Test']}, 'environment': {}}
+        gate.production_options(plan, 'app', app, image, definition)
+        definition['command'] = ['explicit-reviewed-command']; app['Config']['Cmd'] = definition['command'][:]
+        gate.production_options(plan, 'app', app, image, definition)
+        app['Config']['Cmd'] = ['new-native-default']
+        with self.assertRaises(gate.GateError): gate.production_options(plan, 'app', app, image, definition)
+
+    def test_production_decodes_only_canonical_overrides_once(self):
+        app = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'app')
+        plan = {'_legacy': {'app': copy.deepcopy(app)}}
+        image = copy.deepcopy(self.target_images['php'])
+        image['Config']['Env'] = ['NATIVE=a$$b']
+        image['Config']['Cmd'] = ['native-$$-default']
+        app['Config']['Env'] = ['NATIVE=a$$b', 'SYNTHETIC=a$b$$c']
+        app['Config']['Cmd'] = image['Config']['Cmd'][:]
+        definition = {'healthcheck': {'test': app['Config']['Healthcheck']['Test']},
+                      'environment': {'SYNTHETIC': 'a$$b$$$$c'}}
+        gate.production_options(plan, 'app', app, image, definition)
+        definition['command'] = ['explicit-$$-command']; app['Config']['Cmd'] = ['explicit-$-command']
+        gate.production_options(plan, 'app', app, image, definition)
+        app['Config']['Env'] = ['NATIVE=a$b', 'SYNTHETIC=a$b$$c']
+        with self.assertRaises(gate.GateError): gate.production_options(plan, 'app', app, image, definition)
+
+    def test_failure_fence_stops_only_actual_owned_candidate_and_updater_ids(self):
+        gate.save_private(self.value['state_file'], self.state)
+        owner = 'd' * 64
+        for item in self.inspect:
+            item['State']['Running'] = True; item['Config']['Labels'][gate.LABEL] = self.value['_manifest_sha256']
+        app = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'app')
+        nginx = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'nginx')
+        updater = copy.deepcopy(app); updater.update(Id='e' * 64, Name='/' + self.project + '-migration-attempt')
+        updater['Config']['Labels'] = {gate.LABEL: owner, 'com.docker.compose.project': 'owned-migration', 'com.docker.compose.service': 'migration'}
+        live = {item['Id']: item for item in self.inspect}; live[updater['Id']] = updater
+        legacy = {'app': dict(copy.deepcopy(app), Id='a' * 64), 'nginx': dict(copy.deepcopy(nginx), Id='b' * 64)}
+        plan = {'_legacy': legacy, '_candidate': self.value, '_plan_sha256': owner, 'application_uuid': 'production'}
+        stopped = []
+        def transport(*args, **kwargs):
+            if args[:2] == ('ps', '-aq'):
+                selected = list(live.values())
+                for option in args[2:]:
+                    if option.startswith('label='):
+                        key, value = option[6:].split('=', 1); selected = [item for item in selected if item['Config']['Labels'].get(key) == value]
+                return '\n'.join(item['Id'] for item in selected).encode()
+            if args[0] == 'inspect': return json.dumps([live[identifier] for identifier in args[1:]]).encode()
+            if args[0] == 'stop':
+                stopped.extend(args[3:])
+                for identifier in args[3:]: live[identifier]['State']['Running'] = False
+                return b''
+            return self.docker(*args, **kwargs)
+        state = {'writers_fenced': True, 'migration_container': updater['Id']}
+        with patch.object(gate, 'docker', side_effect=transport): self.assertTrue(gate.failed_writer_fence(plan, state))
+        self.assertEqual(set(stopped), {app['Id'], nginx['Id'], updater['Id']})
+        db = next(item for item in self.inspect if item['Config']['Labels']['com.docker.compose.service'] == 'db')
+        self.assertTrue(db['State']['Running'])
+        stopped.clear(); updater['State']['Running'] = True; updater['Config']['Labels'][gate.LABEL] = 'wrong-owner'
+        with patch.object(gate, 'docker', side_effect=transport): self.assertFalse(gate.failed_writer_fence(plan, state))
+        self.assertNotIn(updater['Id'], stopped); self.assertTrue(updater['State']['Running'])
 
     def test_adapter_has_no_build_or_egress_and_explicit_external_resources(self):
         text = (ROOT / 'deploy/staging.compose.yaml').read_text()
@@ -746,8 +852,8 @@ class RecoveryGateTests(unittest.TestCase):
         with patch.object(gate, 'database', side_effect=query):
             self.assertEqual(gate.db_inventory('db', 'custom_')['active_response_tables'], ['custom_responses_7'])
 
-    def postcheck(self, missing_quota=False, missing_inheritance=False):
-        after = copy.deepcopy(self.before); after['schema'] = 717
+    def postcheck(self, missing_quota=False, missing_inheritance=False, after=None):
+        after = copy.deepcopy(self.before if after is None else after); after['schema'] = 717
         calls = []
         def query(identifier, sql):
             calls.append(sql)
@@ -761,6 +867,26 @@ class RecoveryGateTests(unittest.TestCase):
         with patch.object(gate, 'db_inventory', return_value=after), patch.object(gate, 'database', side_effect=query):
             result = gate.migration_postconditions('db', self.before)
         return result, calls
+
+    def test_inactive_and_archived_response_tables_cannot_be_dropped_or_emptied(self):
+        for table in ('custom_responses_8', 'custom_survey_9', 'custom_old_survey_9_20250101000000', 'custom_old_responses_8_20250101000000'):
+            self.before['counts'][table] = 7
+            for dropped in (False, True):
+                after = copy.deepcopy(self.before)
+                if dropped: del after['counts'][table]
+                else: after['counts'][table] = 0
+                with self.subTest(table=table, dropped=dropped):
+                    with self.assertRaises(gate.GateError): self.postcheck(after=after)
+            del self.before['counts'][table]
+
+    def test_only_pinned_insert_targets_and_permission_dedupe_can_change_counts(self):
+        self.before['counts'].update(custom_permissions=5, custom_notifications=0, custom_group_l10ns=1)
+        after = copy.deepcopy(self.before); after['counts'].update(custom_permissions=3, custom_notifications=1, custom_group_l10ns=2)
+        self.assertEqual(self.postcheck(after=after)[0]['schema'], 717)
+        for table, count in (('custom_group_l10ns', 0), ('custom_permissions', 6), ('custom_users', 2)):
+            changed = copy.deepcopy(after); changed['counts'][table] = count
+            with self.subTest(table=table):
+                with self.assertRaises(gate.GateError): self.postcheck(after=changed)
 
     def test_schema717_does_not_mask_missing_active_response_quota_column(self):
         with self.assertRaises(gate.GateError): self.postcheck(missing_quota=True)
@@ -811,10 +937,11 @@ class RecoveryGateTests(unittest.TestCase):
                      'port': 18481, 'volumes': {}, 'networks': {}}
         self.plan.update(_candidate=candidate, _source={'services': {'db': {'environment': {
             'MARIADB_DATABASE': 'synthetic', 'MARIADB_USER': 'synthetic',
-            'MARIADB_PASSWORD': 'synthetic-only-password', 'MARIADB_ROOT_PASSWORD': 'synthetic-only-root'}}}})
+            'MARIADB_PASSWORD': 'synthetic$$only$$$$password', 'MARIADB_ROOT_PASSWORD': 'synthetic-only-root'}}}})
         observed = []
         def render(arguments, **kwargs):
             observed.append(arguments)
+            self.assertEqual(kwargs['env']['STAGING_DB_PASSWORD'], 'synthetic$only$$password')
             directory = Path(arguments[arguments.index('--project-directory') + 1]) if '--project-directory' in arguments else ROOT / 'deploy'
             return json.dumps({'name': candidate['project'], 'services': {
                 service: {'image': candidate['images'][kind], 'volumes': [{'type': 'bind', 'source': str(directory / 'docker/nginx/default.conf'),
@@ -893,7 +1020,7 @@ class RecoveryGateTests(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertEqual(digest(path), state['backup']['sha256'][name])
 
-    def test_migration_timeout_stops_only_recorded_owned_updater(self):
+    def migration_attempt(self, wait_timeout=True, log_code=0):
         Path(self.plan['directory']).mkdir(mode=0o700)
         self.plan['_candidate'] = {'project': 'candidate', 'images': {'php': 'signed-image'},
                                    'volumes': {key: 'owned-' + key for key in set(gate.VOLUMES) - {'db'}}}
@@ -902,7 +1029,9 @@ class RecoveryGateTests(unittest.TestCase):
         def docker(*args, **kwargs):
             calls.append(args)
             if args[0] == 'ps': return b''
-            if args[0] == 'wait': raise subprocess.TimeoutExpired('synthetic wait', 300)
+            if args[0] == 'wait':
+                if wait_timeout: raise subprocess.TimeoutExpired('synthetic wait', 300)
+                return b'0'
             if args[0] == 'inspect': return json.dumps([{'Id': 'a' * 64, 'Name': name,
                 'Config': {'Image': 'signed-image', 'Labels': {gate.LABEL: self.plan['_plan_sha256']}},
                 'State': {'Running': False}, 'Mounts': [{'Type': 'volume', 'Name': 'owned-' + key,
@@ -912,13 +1041,34 @@ class RecoveryGateTests(unittest.TestCase):
              patch.object(gate, 'compose'), patch.object(gate, 'project_container', return_value='a' * 64), \
              patch.object(gate, 'load_private', return_value={'services': {'app': {}}, 'volumes': {}, 'networks': {}}), \
              patch.object(gate, 'docker', side_effect=docker), \
-             patch.object(gate.subprocess, 'run'):
-            with self.assertRaises(subprocess.TimeoutExpired): gate.migrate_candidate(self.plan, state, 'db', 'compose')
+             patch.object(gate, 'migration_postconditions', return_value={'schema': 717}), \
+             patch.object(gate.subprocess, 'run', return_value=types.SimpleNamespace(returncode=log_code)):
+            failure = None
+            try: gate.migrate_candidate(self.plan, state, 'db', 'compose')
+            except Exception as error: failure = error
+        return state, calls, failure
+
+    def test_migration_timeout_stops_only_recorded_owned_updater(self):
+        state, calls, failure = self.migration_attempt()
+        self.assertIsInstance(failure, subprocess.TimeoutExpired)
         self.assertIn(('stop', '-t', '10', 'a' * 64), calls)
         self.assertEqual(state['migration_container'], 'a' * 64)
         self.assertEqual((Path(self.plan['directory']) / 'migration.private.log').stat().st_mode & 0o777, 0o600)
 
-    def test_valid_production_transaction_requires_fenced_and_open_proofs(self):
+    def test_failed_private_log_capture_cannot_certify_completed_migration(self):
+        state, calls, failure = self.migration_attempt(wait_timeout=False, log_code=1)
+        self.assertIsInstance(failure, gate.GateError)
+        self.assertEqual(state['status'], 'MIGRATION_RUNNING'); self.assertFalse(state['migration_log_captured'])
+        self.assertEqual(state['migration_container'], 'a' * 64)
+
+    def test_original_updater_failure_is_retained_when_log_capture_also_fails(self):
+        state, calls, failure = self.migration_attempt(wait_timeout=True, log_code=1)
+        self.assertIsInstance(failure, subprocess.TimeoutExpired)
+        self.assertFalse(state['migration_log_captured']); self.assertTrue(state['updater_stop_verified'])
+
+    def production_attempt(self, expires=None):
+        suffix = expires or 'valid'
+        self.plan.update(directory=str(self.root / ('transaction-' + suffix)), state_file=str(self.root / ('state-' + suffix + '.json')))
         candidate_path = self.root / 'candidate.json'; write(candidate_path, {'status': 'PREPARED'})
         candidate = {'project': 'candidate', 'state_file': str(candidate_path), 'images': {'php': 'signed-php'}, 'configuration_commit': 'c' * 40}
         self.plan.update(_candidate=candidate, rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64,
@@ -934,32 +1084,117 @@ class RecoveryGateTests(unittest.TestCase):
             if kind == 'production-proof': return dict(common, status='PRODUCTION_CORE_PASS', https='PASS', ordinary_requests_fenced='PASS', images=candidate['images'])
             self.assertEqual(kind, 'production-open-proof'); self.assertTrue(state['public_unfenced'])
             return {'status': 'PUBLIC_HEALTH_PASS', 'https': 'PASS'}
-        with patch.object(gate, 'provider_gate'), patch.object(gate, 'manifest'), patch.object(gate, 'paired_backup', side_effect=backup), \
+        calls = {'manifest': 0, 'provider': 0}
+        def freshness(kind):
+            def check(*args, **kwargs):
+                calls[kind] += 1
+                if expires == kind and calls[kind] == (2 if kind == 'manifest' else 3): raise gate.GateError('synthetic expired proof')
+            return check
+        with patch.object(gate, 'configuration_source'), patch.object(gate, 'provider_gate', side_effect=freshness('provider')), patch.object(gate, 'manifest', side_effect=freshness('manifest')), patch.object(gate, 'paired_backup', side_effect=backup), \
              patch.object(gate, 'prepare'), patch.object(gate, 'selected_compose', return_value={}), \
              patch.object(gate, 'fenced_compose', return_value={}), patch.object(gate, 'compose'), \
              patch.object(gate, 'wait_db', return_value='db'), patch.object(gate, 'import_database'), \
              patch.object(gate, 'restore_files', return_value=selected), patch.object(gate, 'migrate_candidate'), \
              patch.object(gate, 'wait_runtime', return_value={'db': {'id': 'db'}}), patch.object(gate, 'wait_production', return_value={}), patch.object(gate, 'acknowledgement', side_effect=ack):
-            result = gate.recovery_transaction(self.plan)
+            result = None; failure = None
+            try: result = gate.recovery_transaction(self.plan)
+            except gate.GateError as error: failure = error
+        return result, gate.load_private(self.plan['state_file']), failure, calls
+
+    def test_valid_production_transaction_requires_fenced_and_open_proofs(self):
+        result, state, failure, calls = self.production_attempt()
+        self.assertIsNone(failure); self.assertEqual(calls, {'manifest': 2, 'provider': 3})
         self.assertEqual(result, {'status': 'PROMOTED_CORE_VERIFIED', 'mail_delivery': 'UNKNOWN'})
-        state = gate.load_private(self.plan['state_file'])
         self.assertEqual(state['status'], 'PROMOTED_CORE_VERIFIED'); self.assertFalse(state['writers_fenced'])
         self.assertTrue(state['public_unfenced']); self.assertIn('elapsed_seconds', state)
 
-    def test_failed_promotion_stops_candidate_and_preserves_state(self):
-        self.plan.update(rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64,
-                         _candidate={'project': 'candidate'})
-        def backup(plan, state):
-            state['writers_fenced'] = True
-            Path(plan['directory'], 'production.compose.private.json').write_text('{}')
-            raise gate.GateError('synthetic failed attempt')
-        with patch.object(gate, 'provider_gate'), patch.object(gate, 'paired_backup', side_effect=backup), \
-             patch.object(gate, 'compose') as command:
+    def test_expired_admission_or_provider_cannot_remove_publication_fence(self):
+        for kind in ('manifest', 'provider'):
+            with self.subTest(kind=kind):
+                result, state, failure, calls = self.production_attempt(expires=kind)
+                self.assertIsNone(result); self.assertIsNotNone(failure)
+                self.assertEqual(state['status'], 'FAILED_PRESERVED')
+                self.assertNotEqual(state.get('public_unfenced'), True)
+
+    def test_missing_rendered_source_blocks_before_any_backup_or_writer_stop(self):
+        self.plan.update(_candidate={}, rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64)
+        with patch.object(gate, 'configuration_source', side_effect=gate.GateError('missing private render')) as source, \
+             patch.object(gate, 'paired_backup') as backup, patch.object(gate, 'docker') as docker:
             with self.assertRaises(gate.GateError): gate.recovery_transaction(self.plan)
-        self.assertEqual(command.call_args.args[2:], ('stop', 'app', 'nginx'))
+        source.assert_called_once_with({}, rendered=True); backup.assert_not_called(); docker.assert_not_called()
+        self.assertFalse(Path(self.plan['directory']).exists())
+
+    def writer_fence_fixture(self, foreign=False, partial_stop=False):
+        legacy = {}
+        for index, service in enumerate(('app', 'nginx', 'db'), 1):
+            legacy[service] = {'Id': str(index) * 64, 'Image': 'sha256:' + str(index) * 64,
+                'Config': {'Labels': {'com.docker.compose.project': self.plan['application_uuid'], 'com.docker.compose.service': service}},
+                'Mounts': [], 'NetworkSettings': {'Networks': {}}, 'State': {'Running': True}}
+        live = {item['Id']: copy.deepcopy(item) for item in legacy.values()}
+        self.plan.update(_legacy=legacy, _candidate={'project': 'candidate', '_manifest_sha256': 'd' * 64})
+        if foreign:
+            live['f' * 64] = {'Id': 'f' * 64, 'Config': {'Labels': {'com.docker.compose.project': 'candidate',
+                'com.docker.compose.service': 'app', gate.LABEL: 'wrong-owner'}}, 'State': {'Running': True}}
+        calls = []; initial = [partial_stop]
+        def docker(*args, **kwargs):
+            calls.append(args)
+            if args[:2] == ('ps', '-aq'):
+                selected = list(live.values())
+                for option in args[2:]:
+                    if option.startswith('label='):
+                        key, value = option[6:].split('=', 1)
+                        selected = [item for item in selected if item['Config']['Labels'].get(key) == value]
+                return '\n'.join(item['Id'] for item in selected).encode()
+            if args[0] == 'inspect': return json.dumps([live[identifier] for identifier in args[1:]]).encode()
+            if args[0] == 'stop':
+                identifiers = args[3:]
+                if initial[0]:
+                    initial[0] = False; live[identifiers[0]]['State']['Running'] = False
+                    raise gate.GateError('synthetic partial Docker stop')
+                for identifier in identifiers: live[identifier]['State']['Running'] = False
+                return b''
+            raise AssertionError(args)
+        return live, calls, docker
+
+    def test_initial_partial_stop_without_compose_files_is_verified_by_actual_ids(self):
+        live, calls, docker = self.writer_fence_fixture(partial_stop=True)
+        self.plan.update(rehearsal_receipt='proof', rehearsal_receipt_sha256='a' * 64)
+        def backup(plan, state):
+            gate.checkpoint(plan, state, 'WRITERS_FENCING')
+            gate.docker('stop', '-t', '30', plan['_legacy']['nginx']['Id'], plan['_legacy']['app']['Id'])
+        with patch.object(gate, 'configuration_source'), patch.object(gate, 'provider_gate'), patch.object(gate, 'paired_backup', side_effect=backup), \
+             patch.object(gate, 'docker', side_effect=docker), patch.object(gate, 'compose') as compose:
+            with self.assertRaises(gate.GateError): gate.recovery_transaction(self.plan)
+        compose.assert_not_called()
         state = gate.load_private(self.plan['state_file'])
         self.assertEqual(state['status'], 'FAILED_PRESERVED'); self.assertTrue(state['fence_stop_verified'])
-        self.assertTrue(state['writers_fenced'])
+        for service in ('app', 'nginx'): self.assertFalse(live[self.plan['_legacy'][service]['Id']]['State']['Running'])
+        self.assertTrue(live[self.plan['_legacy']['db']['Id']]['State']['Running'])
+        self.assertFalse((Path(self.plan['directory']) / 'production.compose.private.json').exists())
+
+    def test_foreign_candidate_is_not_stopped_or_reported_as_fenced(self):
+        live, calls, docker = self.writer_fence_fixture(foreign=True)
+        state = {'writers_fenced': True}
+        with patch.object(gate, 'docker', side_effect=docker): self.assertFalse(gate.failed_writer_fence(self.plan, state))
+        self.assertTrue(live['f' * 64]['State']['Running'])
+        self.assertFalse(any(call[0] == 'stop' and 'f' * 64 in call for call in calls))
+        for service in ('app', 'nginx'): self.assertFalse(live[self.plan['_legacy'][service]['Id']]['State']['Running'])
+
+    def test_resumed_rehearsal_original_traffic_is_preserved_and_flag_is_truthful(self):
+        live, calls, docker = self.writer_fence_fixture()
+        state = {'writers_fenced': False, 'status': 'ORIGINAL_TRAFFIC_RESUMED'}
+        with patch.object(gate, 'docker', side_effect=docker): self.assertFalse(gate.failed_writer_fence(self.plan, state))
+        self.assertFalse(any(call[0] == 'stop' for call in calls))
+        for service in ('app', 'nginx'): self.assertTrue(live[self.plan['_legacy'][service]['Id']]['State']['Running'])
+
+    def test_failed_stop_does_not_report_verified_fence(self):
+        live, calls, docker = self.writer_fence_fixture()
+        def failed_stop(*args, **kwargs):
+            if args[0] == 'stop': raise gate.GateError('synthetic stop failed')
+            return docker(*args, **kwargs)
+        with patch.object(gate, 'docker', side_effect=failed_stop):
+            self.assertFalse(gate.failed_writer_fence(self.plan, {'writers_fenced': True}))
+        for service in ('app', 'nginx'): self.assertTrue(live[self.plan['_legacy'][service]['Id']]['State']['Running'])
 
 
 if __name__ == '__main__': unittest.main()

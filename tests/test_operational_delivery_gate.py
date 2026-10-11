@@ -97,7 +97,7 @@ class OperationalGateTests(unittest.TestCase):
             for name in names.values():
                 self.resources[name] = {'name': name, 'id': name if kind == 'volume' else hashlib.sha256(name.encode()).hexdigest(),
                                         'created_at': 'synthetic-created-at', 'labels': {gate.LABEL: self.value['_manifest_sha256']},
-                                        'internal': True if kind == 'network' else None}
+                                        'internal': name == self.value['networks']['backend'] if kind == 'network' else None}
         self.state = {'manifest_sha256': self.value['_manifest_sha256'], 'resources': self.resources,
                       'status': 'PREPARED', 'containers': {}, 'seed_container': None}
         self.inspect = self.runtime_fixture()
@@ -171,6 +171,19 @@ class OperationalGateTests(unittest.TestCase):
 
     def check_runtime(self):
         with patch.object(gate, 'docker', side_effect=self.docker): return gate.runtime(self.value, self.state)
+
+    def test_docker_ps_requests_canonical_container_ids_without_duplicate_flag(self):
+        full_id = 'a' * 64
+        def transport(arguments, **kwargs):
+            return (full_id if '--no-trunc' in arguments else full_id[:12]).encode()
+        with patch.object(gate, 'command', side_effect=transport) as mocked:
+            self.assertEqual(gate.docker('ps', '-aq', '--filter', 'label=synthetic'), full_id.encode())
+            self.assertEqual(mocked.call_args.args[0], ['docker', 'ps', '--no-trunc', '-aq', '--filter', 'label=synthetic'])
+            gate.docker('ps', '--no-trunc', '-aq')
+            self.assertEqual(mocked.call_args.args[0], ['docker', 'ps', '--no-trunc', '-aq'])
+            gate.docker('inspect', full_id, timeout=7)
+            self.assertEqual(mocked.call_args.args[0], ['docker', 'inspect', full_id])
+            self.assertEqual(mocked.call_args.kwargs['timeout'], 7)
 
     def test_trusted_manifest_allows_distinct_configuration_and_build_source(self):
         self.assertEqual(self.value['configuration_commit'], self.configuration_commit)
@@ -378,6 +391,23 @@ class OperationalGateTests(unittest.TestCase):
         self.resources[name] = original; self.resources[name]['internal'] = False
         with self.assertRaises(ValueError): self.check_runtime()
 
+    def test_frontend_must_allow_loopback_publication_without_exposing_backend(self):
+        self.check_runtime()
+        name = self.value['networks']['frontend']
+        self.assertFalse(self.resources[name]['internal'])
+        self.resources[name]['internal'] = True
+        with self.assertRaises(ValueError): self.check_runtime()
+
+    def test_external_resource_templates_use_coolify_supported_variables(self):
+        text = (ROOT / 'deploy/staging.compose.yaml').read_text()
+        declarations = [line for line in text.splitlines() if 'external: true, name:' in line]
+        self.assertEqual(len(declarations), 9)
+        for line in declarations:
+            self.assertRegex(line, r"name: '\$\{DELIVERY_[A-Z_]+\}'")
+            self.assertNotIn(':?', line)
+        self.assertIn('${DELIVERY_APP_IMAGE:?admitted digest required}', text)
+        self.assertIn('${STAGING_DB_PASSWORD:?required}', text)
+
     def test_prepare_refuses_preexisting_resource_before_any_creation(self):
         responses = [self.value['volumes']['db'].encode(), b'']
         with patch.object(gate, 'docker', side_effect=responses) as mocked:
@@ -410,6 +440,10 @@ class OperationalGateTests(unittest.TestCase):
         self.assertIn('cp -a /var/www/html/. /seed/code/', create[-1])
         self.assertIn('cp -a /opt/limesurvey-managed-plugins/ResendEmail', create[-1])
         self.assertIn(('rm', 'f' * 64), calls)
+        networks = [args for args in calls if args[:2] == ('network', 'create')]
+        self.assertEqual(len(networks), 2)
+        for args in networks:
+            self.assertEqual('--internal' in args, args[-1] == self.value['networks']['backend'])
 
     def test_initialize_requires_empty_database_and_records_failed_state(self):
         write(Path(self.value['state_file']), self.state)

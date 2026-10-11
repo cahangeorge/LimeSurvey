@@ -78,7 +78,7 @@ UUID network and `env_file` entries to every service, which violates these
 private DB boundaries. RAW Compose permits only its three documented labels:
 `coolify.managed=true`, `coolify.applicationUuid=PROJECT`,
 `coolify.type=application`. Any unexpected runtime network fails inspection. App and DB have only the internal backend; Nginx has only the two
-internal networks and a loopback-bound HTTP port. Staging Resend is disabled.
+networks: an internal backend and a non-internal frontend used only by Nginx, with a loopback-bound HTTP port. Staging Resend is disabled.
 
 The operator owns Coolify API/deployment and SSH tunneling separately. This helper
 contains no provider API, deployment command or arbitrary command interface.

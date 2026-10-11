@@ -924,7 +924,7 @@ class RecoveryGateTests(unittest.TestCase):
         with patch.object(gate, 'database', side_effect=query):
             self.assertEqual(gate.db_inventory('db', 'custom_')['active_response_tables'], ['custom_responses_7'])
 
-    def postcheck(self, missing_quota=False, missing_inheritance=False, after=None):
+    def postcheck(self, missing_quota=False, missing_inheritance=False, after=None, index_rows=None):
         after = copy.deepcopy(self.before if after is None else after); after['schema'] = 717
         calls = []
         def query(identifier, sql):
@@ -932,13 +932,35 @@ class RecoveryGateTests(unittest.TestCase):
             if 'quota_exit' in sql: return [] if missing_quota else ['int(11)\tYES']
             if 'COLUMN_DEFAULT' in sql: return ["'N'"]
             if 'session_token' in sql: return ['varchar(64)\tYES']
-            if 'STATISTICS' in sql: return ['entity_id\t0', 'entity\t0', 'permission\t0', 'uid\t0']
+            if 'STATISTICS' in sql:
+                expected = 'INDEX_NAME="' + self.before['prefix'] + 'idx1_permissions"'
+                if expected not in sql: return []
+                return ['entity_id\t0', 'entity\t0', 'permission\t0', 'uid\t0'] if index_rows is None else index_rows
             if 'information_schema.COLUMNS' in sql: return ['1']
             if 'gsid <> 0' in sql and missing_inheritance: return ['1']
             return ['0']
         with patch.object(gate, 'db_inventory', return_value=after), patch.object(gate, 'database', side_effect=query):
             result = gate.migration_postconditions('db', self.before)
         return result, calls
+
+    def test_permissions_index_uses_exact_verified_prefix_and_ordered_unique_columns(self):
+        baseline = copy.deepcopy(self.before)
+        for prefix in ('lime_', 'tenant42_'):
+            self.before = copy.deepcopy(baseline); self.before['prefix'] = prefix
+            self.before['counts'] = {name.replace('custom_', prefix, 1): count for name, count in baseline['counts'].items()}
+            self.before['active_response_tables'] = [name.replace('custom_', prefix, 1) for name in baseline['active_response_tables']]
+            result, calls = self.postcheck()
+            self.assertEqual(result['schema'], 717)
+            sql = next(sql for sql in calls if 'STATISTICS' in sql)
+            self.assertIn('INDEX_NAME="' + prefix + 'idx1_permissions"', sql)
+            self.assertIn('ORDER BY SEQ_IN_INDEX', sql)
+            for rows in ([], ['entity_id\t1', 'entity\t1', 'permission\t1', 'uid\t1'],
+                         ['entity_id\t0', 'permission\t0', 'entity\t0', 'uid\t0'],
+                         ['entity_id\t0', 'entity\t0', 'permission\t0'],
+                         ['entity_id\t0', 'entity\t0', 'permission\t0', 'uid\t0', 'extra\t0']):
+                with self.subTest(prefix=prefix, rows=rows), self.assertRaises(gate.GateError):
+                    self.postcheck(index_rows=rows)
+        self.before = baseline
 
     def test_inactive_and_archived_response_tables_cannot_be_dropped_or_emptied(self):
         for table in ('custom_responses_8', 'custom_survey_9', 'custom_old_survey_9_20250101000000', 'custom_old_responses_8_20250101000000'):

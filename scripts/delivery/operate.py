@@ -1050,7 +1050,7 @@ def migration_postconditions(db_id, before):
     require(database(db_id, 'SELECT COLUMN_DEFAULT FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME="' + prefix + 'surveys" AND COLUMN_NAME="savequotaexit";') in (["'N'"], ['N']))
     require(database(db_id, 'SELECT COUNT(*) FROM `' + prefix + 'surveys_groupsettings` WHERE gsid <> 0 AND savequotaexit <> "I";') == ['0'])
     require(database(db_id, 'SELECT COUNT(*) FROM `' + prefix + 'template_configuration` WHERE template_name="fruity_twentythree" AND options<>"inherit" AND options NOT LIKE "%deselectsinglechoice%";') == ['0'])
-    index = database(db_id, 'SELECT COLUMN_NAME,NON_UNIQUE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME="' + prefix + 'permissions" AND INDEX_NAME="idx1_permissions" ORDER BY SEQ_IN_INDEX;')
+    index = database(db_id, 'SELECT COLUMN_NAME,NON_UNIQUE FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME="' + prefix + 'permissions" AND INDEX_NAME="' + prefix + 'idx1_permissions" ORDER BY SEQ_IN_INDEX;')
     require(index == ['entity_id\t0', 'entity\t0', 'permission\t0', 'uid\t0'])
     # Template XML/DB interpretation and actual render are additionally checked by the controller.
     return after

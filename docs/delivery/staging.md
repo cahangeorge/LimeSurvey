@@ -207,3 +207,90 @@ suite: 137 PASS. `git diff --check`: PASS. No target runtime, deployment,
 credential, commit or registry mutation was performed for this remediation.
 Actual staging proof remains HOLD until the protected branch includes the fix
 and the independently reviewed adapter/runtime path is executed.
+
+
+## Finite paired recovery controller
+
+The additional target-side commands are `rehearse`, `promote`, and
+`legacy-rescue`, each requiring `--plan "$PRIVATE_PLAN" --plan-sha256
+"$PRIVATE_PLAN_SHA256"`. The protected JSON plan and evidence are owned 0600;
+the new transaction directory is 0700. All commands take the same stable
+`/var/lock/limesurvey-<application_uuid>.lock`, independent of image/release/state
+path. Never run a parallel Coolify deployment or use its stop-before-hook job.
+No command sends email or certifies runtime from offline tests.
+
+Plan version 1 contains these fields (paths refer to protected local target
+files; do not publish the files):
+
+| Fields | Binding |
+| --- | --- |
+| `application_uuid` | Existing selected production app, never a new production app |
+| `legacy_inspect`, `legacy_inspect_sha256` | Exact original three containers, images, mounts, environments and networks |
+| `trusted_proxy` | Exact live proxy metadata: `Id`, actual Docker image-ID `Image`, `Name`, `compose_project`, `compose_service`; only `/coolify-proxy` in project `coolify-proxy`, service `traefik` |
+| `legacy_compose`, `legacy_compose_sha256` | Server-only expanded private Compose JSON; preserve routes/environment, remove build |
+| `candidate_manifest`, `candidate_manifest_sha256` | Fresh isolated restore resources and current admitted triple; includes reviewed B configuration bindings |
+| `accepted_stage_manifest`, `accepted_stage_manifest_sha256`, `accepted_stage_receipt`, `accepted_stage_receipt_sha256` | Same triple/config and completed staging persistence proof |
+| `provider_receipt` | Fresh existing-app auto-deploy OFF, no running/queued jobs, background writers absent |
+| `directory`, `state_file` | New transaction directory and state, both siblings of plan |
+| `ack_timeout` | Bounded controller acknowledgement timeout, 30–1800 seconds per step |
+| `custom_plugins`, `custom_themes`, `operator_config_files` | Explicit reviewed basenames, excluding old application defaults |
+| `rehearsal_receipt`, `rehearsal_receipt_sha256` | Required for promote: completed rehearsal state, same app/images/config, synthetic recovery PASS |
+
+Provider receipt fields are `application_uuid`, `auto_deploy:false`,
+`running_deployments:[]`, `queued_deployments:[]`,
+`background_writers_absent:true`, and current `checked_at`. It is checked before
+backup and immediately before production replacement. Artifact admission and
+scan clocks remain real; never rewrite them to extend readiness.
+
+The helper checkpoints private state and waits for fixed acknowledgement files
+in `directory`. Every acknowledgement contains `transaction_id`, SHA-256 of
+the current raw `state_file` as `state_sha256`, and UTC `checked_at` (at most ten
+minutes old, five minutes future). The controller reads state, completes the
+actual operation/browser checks and atomically writes the owned 0600 JSON file:
+
+| File | Required actual proof |
+| --- | --- |
+| `offhost.json` | `status:OFFHOST_HASH_VERIFIED`, exact `sha256` mapping for database.sql/files.tar.gz, different machine-id SHA-256 `destination_host_id` |
+| `restore-proof.json` | `status:RESTORE_FUNCTIONAL_PASS`, admin/public/persistence PASS, exact original `security_sha256`, default_theme_options PASS |
+| `recovery-proof.json` | Same actual proof after synthetic bad config, paired 712 restore and migration |
+| `production-proof.json` | `status:PRODUCTION_CORE_PASS`, https/admin/public/persistence PASS, ordinary_requests_fenced PASS, exact candidate `images`, original security_sha256; optional explicit mail_delivery PASS or UNKNOWN |
+| `production-open-proof.json` | `status:PUBLIC_HEALTH_PASS`, actual https PASS after canonical nginx replacement |
+| `legacy-proof.json` | `status:LEGACY_RESCUE_FUNCTIONAL_PASS`, actual admin/public/persistence PASS and original security_sha256 |
+
+During production proof, load the generated `fence-token.private.json` only
+into an owned browser request route as `X-LimeSurvey-Delivery-Token` only for
+the exact approved HTTPS origin (scheme, hostname and port). Strip this header
+from every other origin and reject unexpected top-level redirects. Do not set
+a global context header that could leak the token to third-party resources or
+redirects. It is absent from command lines. Independently
+prove ordinary no-header requests receive 503, then use real HTTPS/admin/public
+and restart/export persistence evidence for the controlled browser. The helper
+retains the fenced configuration's separate hash. Normal `/healthz` is static
+and never authorizes a DB write. Publication replaces the bind with the exact
+canonical file and only recreates nginx. `public_unfenced` is recorded before
+this operation and permanently excludes legacy rescue for that attempt.
+
+`rehearse` resumes original traffic after the off-host backup proof and runs the
+isolated fault/paired recovery. `promote` keeps production writers withdrawn
+through the new backup, isolated migration and controlled production proof.
+Failures preserve resources/logs and attempt to stop both isolated and
+production writers; inspect `fence_stop_verified` before recovery. Failed owned
+updater containers remain stopped with protected logs. Legacy rescue is allowed
+from the hash-bound original pair even when candidate admission expires; it
+never reports security PASS. Actual runtime checks, off-host transfer and browser
+acknowledgements are controller evidence, not results of these offline tests.
+
+The legacy backup topology may include the existing provider proxy on the
+original networks. The plan pins its complete container/image ID and exact
+name/project/service; the helper independently verifies that live identity.
+Only the three recorded legacy services plus that exact proxy may be network
+members. An additional container or substituted proxy blocks backup. This
+exception authorizes no proxy or global-network mutation.
+
+Promoted MariaDB joins only the recorded owned internal candidate backend,
+without published ports or foreign members. Production Compose declares this
+external owned network as `delivery-private`; app joins it in addition to its
+original route/egress networks. Nginx retains its original networks and route
+labels. Runtime inspection requires these exact sets and the recorded private
+network ID. The legacy shared-provider DB topology is never copied to the new
+production DB.

@@ -1066,6 +1066,7 @@ class RecoveryGateTests(unittest.TestCase):
         fenced = Path(result['services']['nginx']['volumes'][0]['source']); content = fenced.read_text()
         self.assertIn('"0:/healthz" 1', content); self.assertIn('return 503', content)
         self.assertIn('~^1: 1', content)
+        self.assertTrue(content.startswith('map_hash_bucket_size 128;\n'))
         token = gate.load_private(state['fence_token_file'])['token']
         self.assertEqual(len(token), 64); self.assertIn(token, content)
         self.assertNotIn(token, json.dumps(state)); self.assertEqual(fenced.stat().st_mode & 0o777, 0o600)

@@ -789,20 +789,58 @@ class RecoveryGateTests(unittest.TestCase):
         self.plan.update(_legacy=services, trusted_proxy=proxy)
         live_proxy = {'Id': proxy['Id'], 'Image': proxy['Image'], 'Name': proxy['Name'], 'State': {'Running': True},
                       'Config': {'Labels': {'com.docker.compose.project': proxy['compose_project'], 'com.docker.compose.service': proxy['compose_service']}}}
+        for item in services.values():
+            item['Mounts'] = [{'Type': 'volume', 'Name': 'owned', 'Destination': '/app', 'RW': True},
+                              {'Type': 'bind', 'Source': '/config', 'Destination': '/config', 'RW': False}]
+        actual = copy.deepcopy(list(services.values()))
+        for item in actual: item['Mounts'].reverse()
         members = set(item['Id'] for item in services.values()) | {proxy['Id']}
         def transport(*args, **kwargs):
             if args[0] == 'ps': return '\n'.join(item['Id'] for item in services.values()).encode()
             if args[:2] == ('network', 'inspect'):
                 return json.dumps([{'Internal': args[2] == 'internal', 'Containers': {identifier: {} for identifier in members}}]).encode()
             if args[:2] == ('inspect', proxy['Id']): return json.dumps([live_proxy]).encode()
-            return json.dumps(list(services.values())).encode()
+            return json.dumps(actual).encode()
         with patch.object(gate, 'docker', side_effect=transport): gate.legacy_state(self.plan)
+        saved = copy.deepcopy(actual[0]['Mounts'])
+        for mounts in (saved + [saved[0]], [dict(saved[0], RW=True), saved[1]]):
+            actual[0]['Mounts'] = mounts
+            with patch.object(gate, 'docker', side_effect=transport), self.assertRaises(gate.GateError): gate.legacy_state(self.plan)
+        actual[0]['Mounts'] = saved
         members.add('f' * 64)
         with patch.object(gate, 'docker', side_effect=transport):
             with self.assertRaises(gate.GateError): gate.legacy_state(self.plan)
         members.remove('f' * 64); live_proxy['Image'] = 'sha256:' + 'c' * 64
         with patch.object(gate, 'docker', side_effect=transport):
             with self.assertRaises(gate.GateError): gate.legacy_state(self.plan)
+
+    def test_exact_mount_comparison_allows_only_order_changes(self):
+        original = [{'Type': 'volume', 'Name': 'owned', 'Source': '/data/owned', 'Destination': '/app',
+                     'Driver': 'local', 'Mode': 'rw', 'RW': True, 'Propagation': ''},
+                    {'Type': 'bind', 'Source': '/repo/config', 'Destination': '/config',
+                     'Mode': 'ro', 'RW': False, 'Propagation': 'rprivate'}]
+        self.assertTrue(gate.same_mounts(original, list(reversed(original))))
+        for field, value in (('Source', '/data/foreign'), ('RW', False), ('Mode', 'ro'), ('Propagation', 'shared')):
+            changed = copy.deepcopy(original); changed[0][field] = value
+            with self.subTest(field=field): self.assertFalse(gate.same_mounts(original, changed))
+        with self.assertRaises(gate.GateError): gate.same_mounts(original, original + [original[0]])
+        with self.assertRaises(gate.GateError): gate.same_mounts(original + [original[0]], original + [original[0]])
+
+    def test_failure_fence_accepts_mount_permutation_but_rejects_drift_and_duplicates(self):
+        for mutation in ('permutation', 'changed', 'duplicate'):
+            live, calls, docker = self.writer_fence_fixture()
+            mounts = [{'Type': 'volume', 'Name': 'owned', 'Destination': '/app', 'RW': True},
+                      {'Type': 'bind', 'Source': '/config', 'Destination': '/config', 'RW': False}]
+            for service in ('app', 'nginx'):
+                original = self.plan['_legacy'][service]; original['Mounts'] = copy.deepcopy(mounts)
+                live[original['Id']]['Mounts'] = copy.deepcopy(list(reversed(mounts)))
+            app = live[self.plan['_legacy']['app']['Id']]
+            if mutation == 'changed': app['Mounts'][0]['RW'] = True
+            if mutation == 'duplicate': app['Mounts'].append(copy.deepcopy(app['Mounts'][0]))
+            with self.subTest(mutation=mutation), patch.object(gate, 'docker', side_effect=docker):
+                self.assertEqual(gate.failed_writer_fence(self.plan, {'writers_fenced': True}), mutation == 'permutation')
+            self.assertEqual(app['State']['Running'], mutation != 'permutation')
+            self.assertFalse(live[self.plan['_legacy']['nginx']['Id']]['State']['Running'])
 
     def test_production_compose_restricts_db_to_private_network(self):
         candidate = {'project': 'candidate', 'repository_root': str(self.root), 'images': {kind: 'signed-' + kind for kind in gate.REPOSITORIES},

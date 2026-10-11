@@ -1265,7 +1265,7 @@ def fenced_compose(plan, state):
     require(len(re.findall(r'\bserver\s*\{', raw)) == 1)
     token = secrets.token_hex(32)
     require(re.search(r'location\s*=\s*/healthz\s*\{', raw))
-    maps = 'map $http_x_limesurvey_delivery_token $delivery_authorized { default 0; "' + token + '" 1; }\n'
+    maps = 'map_hash_bucket_size 128;\nmap $http_x_limesurvey_delivery_token $delivery_authorized { default 0; "' + token + '" 1; }\n'
     maps += 'map "$delivery_authorized:$uri" $delivery_allowed { default 0; ~^1: 1; "0:/healthz" 1; }\n'
     config = maps + re.sub(r'(\bserver\s*\{)', lambda match: match[0] + '\n    if ($delivery_allowed = 0) { return 503; }', raw, count=1)
     path = Path(plan['directory']) / 'nginx-fenced.private.conf'

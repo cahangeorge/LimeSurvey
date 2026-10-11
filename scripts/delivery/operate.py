@@ -90,6 +90,8 @@ def command(arguments, data=None, timeout=120, env=None):
 
 
 def docker(*args, data=None, timeout=120):
+    if args and args[0] == 'ps' and '--no-trunc' not in args:
+        args = ('ps', '--no-trunc', *args[1:])
     return command(['docker', *args], data=data, timeout=timeout)
 
 
@@ -264,11 +266,11 @@ def owned_resources(value, state, complete=True):
     require(set(state['resources']) <= expected_names)
     if complete: require(set(state['resources']) == expected_names)
     for kind, names in (('volume', value['volumes']), ('network', value['networks'])):
-        for name in names.values():
+        for role, name in names.items():
             if name not in state['resources']: continue
             actual = resource(kind, name)
             require(actual == state['resources'][name] and actual['labels'].get(LABEL) == value['_manifest_sha256'])
-            if kind == 'network': require(actual['internal'] is True)
+            if kind == 'network': require(actual['internal'] is (role == 'backend'))
 
 
 def image_identity(value, kind, inspected):
@@ -343,9 +345,9 @@ def prepare(value):
              'resources': {}, 'seed_container': None, 'containers': {}}
     save_private(state_path, state)
     for kind, names in (('network', value['networks']), ('volume', value['volumes'])):
-        for name in names.values():
+        for role, name in names.items():
             args = [kind, 'create', '--label', LABEL + '=' + value['_manifest_sha256']]
-            if kind == 'network': args += ['--internal']
+            if kind == 'network' and role == 'backend': args += ['--internal']
             docker(*args, name)
             state['resources'][name] = resource(kind, name); save_private(state_path, state)
     mounts = []

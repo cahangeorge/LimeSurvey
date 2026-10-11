@@ -80,13 +80,13 @@ services:
     cpus: '0.25'
     mem_limit: 128m
 volumes:
-  db-data: {external: true, name: '${DELIVERY_DB_VOLUME:?required}'}
-  app-code: {external: true, name: '${DELIVERY_CODE_VOLUME:?required}'}
-  app-config: {external: true, name: '${DELIVERY_CONFIG_VOLUME:?required}'}
-  app-upload: {external: true, name: '${DELIVERY_UPLOAD_VOLUME:?required}'}
-  app-plugins: {external: true, name: '${DELIVERY_PLUGINS_VOLUME:?required}'}
-  app-themes: {external: true, name: '${DELIVERY_THEMES_VOLUME:?required}'}
-  app-runtime: {external: true, name: '${DELIVERY_RUNTIME_VOLUME:?required}'}
+  db-data: {external: true, name: '${DELIVERY_DB_VOLUME}'}
+  app-code: {external: true, name: '${DELIVERY_CODE_VOLUME}'}
+  app-config: {external: true, name: '${DELIVERY_CONFIG_VOLUME}'}
+  app-upload: {external: true, name: '${DELIVERY_UPLOAD_VOLUME}'}
+  app-plugins: {external: true, name: '${DELIVERY_PLUGINS_VOLUME}'}
+  app-themes: {external: true, name: '${DELIVERY_THEMES_VOLUME}'}
+  app-runtime: {external: true, name: '${DELIVERY_RUNTIME_VOLUME}'}
 networks:
-  backend: {external: true, name: '${DELIVERY_BACKEND_NETWORK:?required}'}
-  frontend: {external: true, name: '${DELIVERY_FRONTEND_NETWORK:?required}'}
+  backend: {external: true, name: '${DELIVERY_BACKEND_NETWORK}'}
+  frontend: {external: true, name: '${DELIVERY_FRONTEND_NETWORK}'}

@@ -42,6 +42,22 @@ fencing; its sole DB network must be an internal app+DB-only bridge. The
 admission, restore/browser proof, off-host retention, cutover and retirement
 remain separate operator gates.
 
+## 2026-10-22 companion CI remediation slice
+
+CI run 39776804915 established the application ARM64 build, Compose smoke and
+functional roundtrip, but blocked MariaDB on gosu's Go 1.27.2 stdlib CVE and
+Nginx on an unavailable libexpat pin. This authorized source-only slice updates
+Go to official 1.27.3 with immutable image index and compiler/stdlib evidence,
+and libexpat to the exact 2.9.0-r0 available in official Alpine 3.24 indexes for
+both aarch64 and x86_64. Preserve gosu source/dependency hashes and all severity,
+coverage, signing and runtime gates; no exception or production action.
+
+The bounded scope exceeds five files: MariaDB and Nginx Dockerfiles, their CI
+gates and regression fixtures, release-gate workflow package assertion,
+companion/MariaDB documentation, this plan and maintenance evidence. Validate
+package availability, run the offline suite and targeted local builds/probes.
+Native ARM64 regression/security/signing acceptance must rerun in CI.
+
 ## Architecture decisions
 
 1. **Parallel replacement, not in-place mutation.** LimeSurvey receives a separate Coolify application, database, volumes, and `survey.omnestack.com` hostname. Formbricks remains untouched until acceptance checks pass.

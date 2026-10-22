@@ -46,3 +46,32 @@ security identity and uploads must be restored deliberately from paired backup.
 No prior 7.5 Git-source receipt can admit this candidate. Fresh exact-source
 native ARM64 CI/build, browser/installer/export/restart checks, security scans,
 three-component signing and paired backup/restore remain required before release.
+
+## Companion remediation after CI feedback
+
+CI run [39776804915](https://github.com/cahangeorge/LimeSurvey/actions/runs/39776804915)
+blocked on gosu Go 1.27.2 stdlib `CVE-2026-111943` (fixed 1.27.3), and an
+unavailable Nginx libexpat 2.8.5-r0 pin. The updated candidate requires official
+`golang:1.27.3-alpine3.24@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4`
+and libexpat 2.9.0-r0. Source/module checksums and strict zero HIGH/CRITICAL/
+UNKNOWN inventory/security/signing gates remain mandatory.
+
+Official Alpine 3.24 `main/{aarch64,x86_64}/APKINDEX.tar.gz` and community indexes
+were read directly. Both architectures provide libexpat 2.9.0-r0, libpng
+1.6.59-r0, pcre2 10.49-r0 and tiff 4.7.2-r0 in main. No other recipe package
+pin was obsolete in these indexes.
+
+Verification commands and results:
+
+- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*gate.py'`: PASS, 195 tests including the separate crosshost source slice. Added explicit prior-Go-stdlib rejection and older-libexpat consistent inventory/scan/SBOM rejection.
+- `PYTHONDONTWRITEBYTECODE=1 python3 tests/functional-smoke.py self-test`: PASS, 11 tests.
+- `docker build --pull --layers --format docker --platform linux/amd64 --file docker/nginx/Dockerfile --tag localhost/limesurvey-nginx:expat290 docker/nginx`: PASS. Local config `sha256:dfaf5d66e82e1b66485d968593a5b9f31e27f674ff199c45696a96d07e8d12b1`. Independent `/lib/apk/db/installed` extraction confirms all four exact patches. `/etc/alpine-release` remains 3.24.2; `nginx -t`: PASS.
+- `NGINX_IMAGE=sha256:dfaf5d66e82e1b66485d968593a5b9f31e27f674ff199c45696a96d07e8d12b1 FPM_IMAGE=sha256:a26f169992ec21469df19281e8ba8f50878da289ff0395d428b0658acd9c7bd6 CONTAINER_ENGINE=podman ./tests/nginx-security-smoke.sh`: PASS, health/config/static/FastCGI HTTPS/path/proxy, seven protected paths and unexpected PHP denial; owned cleanup passed.
+- `docker build --pull --layers --format docker --platform linux/amd64 --target gosu --file docker/mariadb/Dockerfile --tag localhost/limesurvey-gosu:go1273 .`: PASS, local builder-stage config `sha256:42eab1409d212306fd4bd731e8a3a288061c7da987b72502852ec8e205e9c0f0`.
+- Network-disabled `go version -m /gosu` from the built stage: exact go1.27.3, unchanged two dependency versions/checksums and exact strict build settings. Independently extracted binary SHA-256 `99dd63ba00e535cd5256b95c4d503d9610a18855e48cc39520d72a79de72c18d`; ELF is static ARM64, no dynamic segment/interpreter, symbol table retained. It was cross-compiled, not executed on this AMD64 host.
+- `sh -n tests/nginx-security-smoke.sh` and `git diff --check`: PASS.
+
+New native ARM64 MariaDB privilege/init/persistence regression, Nginx runtime,
+fresh exact-image security scans/SBOMs and signed release admission remain CI
+gates. Local builds do not establish a clean CVE scan or production readiness.
+This remediation made no production or remote PR changes.

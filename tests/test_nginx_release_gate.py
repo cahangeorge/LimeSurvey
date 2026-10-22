@@ -30,7 +30,7 @@ def fixture():
               'org.opencontainers.image.revision': SHA, 'org.opencontainers.image.version': gate.VERSION,
               'io.omnestack.limesurvey.component': 'nginx'}
     image = [{'Id': ID, 'Os': 'linux', 'Architecture': 'arm64', 'Config': {'Labels': labels}, 'RepoDigests': [ref]}]
-    inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': [['libexpat', '2.8.5-r0'], ['libpng', '1.6.59-r0'],
+    inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': [['libexpat', '2.9.0-r0'], ['libpng', '1.6.59-r0'],
                    ['pcre2', '10.49-r0'], ['tiff', '4.7.2-r0']]}
     packages = [{'Name': n, 'Version': v, 'Identifier': {'PURL': 'pkg:apk/alpine/' + n + '@' + v + '?arch=aarch64&distro=3.24.2'}} for n, v in inventory['os']]
     report = {'SchemaVersion': 2, 'ArtifactName': ref, 'ArtifactType': 'container_image', 'Trivy': {'Version': '0.75.0'},
@@ -80,22 +80,24 @@ class NginxReleaseGateTest(unittest.TestCase):
     def test_valid_final_preserves_low_medium(self):
         self.assertEqual(gate.validate_image(*fixture()), {'os_packages': 4})
 
-    def test_rejects_unfixed_tiff_with_consistent_inventory_scan_and_sbom(self):
-        data = fixture()
-        for package in data[4]['os']:
-            if package[0] == 'tiff':
-                package[1] = '4.7.1-r0'
-        old_purl = 'pkg:apk/alpine/tiff@4.7.1-r0?arch=aarch64&distro=3.24.2'
-        for package in data[3]['Results'][0]['Packages']:
-            if package['Name'] == 'tiff':
-                package['Version'] = '4.7.1-r0'
-                package['Identifier']['PURL'] = old_purl
-        for component in data[6]['components']:
-            if component['name'] == 'tiff':
-                component.update(version='4.7.1-r0', purl=old_purl)
-                component['bom-ref'] = old_purl
-        with self.assertRaisesRegex(ValueError, 'missing patched APK versions'):
-            gate.validate_image(*data)
+    def test_rejects_older_patches_with_consistent_inventory_scan_and_sbom(self):
+        for name, old_version in (('tiff', '4.7.1-r0'), ('libexpat', '2.8.5-r0')):
+            with self.subTest(package=name):
+                data = fixture()
+                for package in data[4]['os']:
+                    if package[0] == name:
+                        package[1] = old_version
+                old_purl = 'pkg:apk/alpine/' + name + '@' + old_version + '?arch=aarch64&distro=3.24.2'
+                for package in data[3]['Results'][0]['Packages']:
+                    if package['Name'] == name:
+                        package['Version'] = old_version
+                        package['Identifier']['PURL'] = old_purl
+                for component in data[6]['components']:
+                    if component['name'] == name:
+                        component.update(version=old_version, purl=old_purl)
+                        component['bom-ref'] = old_purl
+                with self.assertRaisesRegex(ValueError, 'missing patched APK versions'):
+                    gate.validate_image(*data)
 
     def test_rejects_missing_tiff_with_consistent_inventory_scan_and_sbom(self):
         data = fixture()
@@ -152,12 +154,12 @@ class NginxReleaseGateTest(unittest.TestCase):
             lambda x: x[6]['components'][0].pop('bom-ref'),
             lambda x: x[6]['components'].append(copy.deepcopy(x[6]['components'][0])),
         ]
-        bad_purls = ['pkg:broken', 'pkg:apk/alpine/wrong@2.8.5-r0?arch=aarch64&distro=3.24.2',
+        bad_purls = ['pkg:broken', 'pkg:apk/alpine/wrong@2.9.0-r0?arch=aarch64&distro=3.24.2',
                      'pkg:apk/alpine/libexpat@old?arch=aarch64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@2.8.5-r0?arch=amd64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@2.8.5-r0?arch=aarch64&distro=3.24.1',
-                     'pkg:apk/alpine/libexpat@2.8.5-r0?arch=aarch64&arch=aarch64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@2.8.5-r0?arch=aarch64&distro=3.24.2#fragment']
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=amd64&distro=3.24.2',
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&distro=3.24.1',
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&arch=aarch64&distro=3.24.2',
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&distro=3.24.2#fragment']
         for purl in bad_purls:
             mutations.append(lambda x, p=purl: x[3]['Results'][0]['Packages'][0]['Identifier'].__setitem__('PURL', p))
         for mutate in mutations:

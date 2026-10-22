@@ -16,7 +16,7 @@ spec.loader.exec_module(gate)
 
 class MariaDBTests(unittest.TestCase):
     def build(self):
-        return {'source': gate.GOSU_SHA, 'archive_sha256': gate.ARCHIVE, 'compiler': 'go1.27.2',
+        return {'source': gate.GOSU_SHA, 'archive_sha256': gate.ARCHIVE, 'compiler': 'go1.27.3',
                 'modules': dict(gate.MODULES), 'settings': dict(gate.SETTINGS), 'main': '(devel)',
                 'path': 'github.com/tianon/gosu', 'sha256': 'a' * 64, 'static_arm64': True, 'version': '1.19'}
 
@@ -29,7 +29,7 @@ class MariaDBTests(unittest.TestCase):
             if value is None: build['settings'].pop('DefaultGODEBUG', None)
             else: build['settings']['DefaultGODEBUG'] = value
             with self.subTest(default_godebug=value), self.assertRaises(ValueError): gate.validate_build(build)
-        for key, bad in [('source', 'b' * 40), ('compiler', 'go1.27.1'), ('static_arm64', False),
+        for key, bad in [('source', 'b' * 40), ('compiler', 'go1.27.2'), ('static_arm64', False),
                          ('version', '1.18'), ('modules', {}), ('settings', {}), ('sha256', 'unknown'),
                          ('path', 'other/module')]:
             with self.subTest(key=key):
@@ -37,6 +37,18 @@ class MariaDBTests(unittest.TestCase):
                 with self.assertRaises(ValueError): gate.validate_build(build)
         build = self.build(); build['modules']['golang.org/x/sys'] = ['v0.48.0', 'wrong']
         with self.assertRaises(ValueError): gate.validate_build(build)
+
+    def test_previous_stdlib_scan_cannot_admit_new_compiler(self):
+        inventory, report, db, now = self.fixtures()
+        packages = report['Results'][1]['Packages']
+        stdlib = next(p for p in packages if p['Name'] == 'stdlib')
+        stdlib.update(ID='stdlib@v1.27.2', Version='v1.27.2')
+        stdlib['Identifier']['PURL'] = 'pkg:golang/stdlib@v1.27.2'
+        root = next(p for p in packages if p['Name'] == 'github.com/tianon/gosu')
+        root['DependsOn'] = [value.replace('stdlib@v1.27.3', 'stdlib@v1.27.2')
+                             for value in root['DependsOn']]
+        with self.assertRaises(ValueError):
+            self.scan(inventory, report, db, now)
 
     def test_missing_or_failed_cleanup_never_passes(self):
         proof = {'image_id': 'sha256:' + 'a' * 64, 'binary_sha256': 'a' * 64,
@@ -144,8 +156,8 @@ class MariaDBTests(unittest.TestCase):
               for name, value in gate.MODULES.items()]
         go.append({'ID': 'github.com/tianon/gosu', 'Name': 'github.com/tianon/gosu',
                    'Identifier': {'PURL': 'pkg:golang/github.com/tianon/gosu'}, 'Relationship': 'root',
-                   'DependsOn': ['github.com/moby/sys/user@v0.4.1', 'golang.org/x/sys@v0.49.0', 'stdlib@v1.27.2']})
-        go.append({'ID': 'stdlib@v1.27.2', 'Name': 'stdlib', 'Version': 'v1.27.2', 'Identifier': {'PURL': 'pkg:golang/stdlib@v1.27.2'}})
+                   'DependsOn': ['github.com/moby/sys/user@v0.4.1', 'golang.org/x/sys@v0.49.0', 'stdlib@v1.27.3']})
+        go.append({'ID': 'stdlib@v1.27.3', 'Name': 'stdlib', 'Version': 'v1.27.3', 'Identifier': {'PURL': 'pkg:golang/stdlib@v1.27.3'}})
         report = {'SchemaVersion': 2, 'ArtifactName': '/owned/candidate.tar', 'ArtifactType': 'container_image',
                   'ArtifactID': image_id, 'Trivy': {'Version': '0.75.0'},
                   'Metadata': {'ImageID': image_id, 'ImageConfig': {'architecture': 'arm64', 'os': 'linux'},
@@ -171,7 +183,7 @@ class MariaDBTests(unittest.TestCase):
                      lambda p: p.update(Relationship='direct'),
                      lambda p: p['Identifier'].update(PURL='pkg:golang/github.com/tianon/gosu@(devel)'),
                      lambda p: p.update(DependsOn=[]),
-                     lambda p: p.update(DependsOn=['stdlib@v1.27.2'] * 3),
+                     lambda p: p.update(DependsOn=['stdlib@v1.27.3'] * 3),
                      lambda p: p['DependsOn'].append('unknown@v1'),
                      lambda p: p['DependsOn'].__setitem__(0, 'github.com/moby/sys/user@v0.4.0')]
         for mutate in mutations:
@@ -276,7 +288,7 @@ class MariaDBTests(unittest.TestCase):
             'sbom.cdx.json': {'bomFormat': 'CycloneDX', 'specVersion': '1.7', 'metadata': {'component': {'type': 'container', 'name': ref,
                  'properties': [{'name': 'aquasecurity:trivy:ImageID', 'value': inventory['image_id']}]}}, 'components': components,
                  'dependencies': [{'ref': 'pkg:golang/github.com/tianon/gosu', 'dependsOn': [
-                     'pkg:golang/github.com/moby/sys/user@v0.4.1', 'pkg:golang/golang.org/x/sys@v0.49.0', 'pkg:golang/stdlib@v1.27.2']}]}}
+                     'pkg:golang/github.com/moby/sys/user@v0.4.1', 'pkg:golang/golang.org/x/sys@v0.49.0', 'pkg:golang/stdlib@v1.27.3']}]}}
         for name, value in files.items(): (root / name).write_text(json.dumps(value))
         (root / 'registry-manifest.json').write_bytes(raw)
         return digest, sha, now
@@ -314,7 +326,7 @@ class MariaDBTests(unittest.TestCase):
                      lambda s, r: r.update(properties=[]), lambda s, r: s['components'].append(copy.deepcopy(r)),
                      lambda s, r: s.pop('dependencies'), lambda s, r: s['dependencies'].clear(),
                      lambda s, r: s['dependencies'].append(copy.deepcopy(s['dependencies'][0])),
-                     lambda s, r: s['dependencies'][0].update(dependsOn=['pkg:golang/stdlib@v1.27.2'] * 3),
+                     lambda s, r: s['dependencies'][0].update(dependsOn=['pkg:golang/stdlib@v1.27.3'] * 3),
                      lambda s, r: s['dependencies'][0]['dependsOn'].__setitem__(0, 'pkg:golang/github.com/moby/sys/user@v0.4.0'),
                      lambda s, r: next(p for p in s['components'] if p.get('name') == 'stdlib').pop('version')]
         for mutate in mutations:

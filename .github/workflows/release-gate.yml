@@ -35,6 +35,13 @@ jobs:
         run: |
           set -euo pipefail
           docker compose --env-file .env.example config --quiet
+          OCI_PROJECT=ls-oci-ci OCI_PROXY_NETWORK=ci-proxy OCI_PROBE_PORT=18482 \
+          OCI_APP_IMAGE=ghcr.io/cahangeorge/limesurvey@sha256:$(printf 'a%.0s' {1..64}) \
+          OCI_NGINX_IMAGE=ghcr.io/cahangeorge/limesurvey-nginx@sha256:$(printf 'b%.0s' {1..64}) \
+          OCI_DB_IMAGE=ghcr.io/cahangeorge/limesurvey-mariadb@sha256:$(printf 'c%.0s' {1..64}) \
+          OCI_DB_NAME=ci OCI_DB_USER=ci OCI_DB_PASSWORD=ci OCI_DB_ROOT_PASSWORD=ci \
+          OCI_RESEND_API_KEY=ci OCI_RESEND_FROM_EMAIL=ci@example.invalid \
+            docker compose -f deploy/compose.oci-fresh.yaml config --quiet
           sh -n docker/entrypoint.sh
           sh -n tests/smoke.sh
           sh -n tests/nginx-security-smoke.sh

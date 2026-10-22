@@ -1,7 +1,7 @@
 # Spec: Replace Formbricks with LimeSurvey on Coolify
 
 ## Status
-Approved by the user on 2026-09-17. No Formbricks data, container, volume, domain, or DNS record may be deleted until the pre-cutover backup is verified. Permanent deletion still requires a separate, explicit final approval after the rollback window.
+Approved by the user on 2026-09-17. The 2026-10-22 decision replaces the old LimeSurvey data migration with a fresh, empty OCI installation and authorizes removal of only old LimeSurvey resources after target acceptance. Formbricks retains its separate backup, rollback and final deletion requirements.
 
 ## Objective
 Replace the shared Formbricks survey service with a self-hosted LimeSurvey Community Edition service on OCI, migrating from the current OmneStack service in Coolify `tools/production`, suitable for Georgiana Daycare and future platforms.
@@ -32,7 +32,7 @@ strict artifact security/signing acceptance is mandatory before deployment.
 - PHP 8.3.36 FPM with required/recommended extensions, pinned by immutable multi-architecture image digest.
 - Nginx reverse proxy.
 - MariaDB 11.4 LTS, pinned to an explicit image tag.
-- Docker Compose on the OCI ARM64 target, managed through the reviewed deployment path. OmneStack is the current source; OCI restore rehearsal and cutover remain pending.
+- Docker Compose on the OCI ARM64 target, managed through the reviewed fresh-install deployment path. No old LimeSurvey data is imported.
 - Persistent named volumes for database, LimeSurvey upload files, plugins, themes/customizations, and writable runtime configuration.
 - Custom LimeSurvey email plugin using the Resend `POST /emails` HTTPS API and `RESEND_API_KEY` from runtime environment; no secret stored in Git or logged.
 

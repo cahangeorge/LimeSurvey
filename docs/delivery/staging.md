@@ -1,5 +1,9 @@
 # Strict artifact admission before operational staging
 
+The 2026-10-22 OCI installation is fresh and imports no old LimeSurvey data.
+The backup/restore sections below describe a historical migration path and do
+not gate this installation. Artifact admission and live acceptance still apply.
+
 `staging-release.py` accepts only a trusted three-component PHP/Nginx/MariaDB
 bundle. Its result establishes artifact admission and keeps
 `staging_deployable=false`, production `HOLD`. Selected-triple runtime, mounted
@@ -8,7 +12,7 @@ promotion and rollback remain separate operational gates. The historical
 MariaDB applicability disposition and frozen old Compose receipt cannot admit
 the new bundle. No waiver is renewed and no archived timestamp is rewritten.
 
-The accepted artifact build source is
+The previous accepted artifact build source was
 `d35eafe8861b34b597b1640382854dadd82b39a5`; its upstream security policy pins
 `c5a2ac817396220e054efc3fd26b84cafb92b36f` (7.5.0+261001). Publisher runs are
 PHP `38091168439`, Nginx `38091739144`, MariaDB `38091169584`, attempt 1.
@@ -17,12 +21,14 @@ configuration source. The Nginx publisher companion smoke used historical FPM;
 it does not prove this selected triple works together. Source-built PHP and
 LimeSurvey application/bundled assets remain outside OS/Composer CVE coverage.
 
+Current policy requires CE `7.7.0+261020`, archive SHA-256 `925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d` and PHP `8.3.36`. New release receipts use `upstream.source`; bundles and admission receipts use `upstream_source`. Previous Git-source receipts require a new build and cannot admit this candidate.
+
 ## Trusted bundle contract
 
 Store this JSON privately outside Git. Supply its reviewed SHA-256 through an
 independent trusted channel; computing a hash from an unreviewed candidate does
 not establish trust. Schema version 1 requires `source_commit`,
-`upstream_commit`, and exactly `components.php`, `components.nginx`,
+`upstream_source` (`type: release-zip` plus the exact reviewed `sha256`), and exactly `components.php`, `components.nginx`,
 `components.mariadb`. Each component requires:
 
 - `evidence_directory`: absolute private directory with original publisher evidence.

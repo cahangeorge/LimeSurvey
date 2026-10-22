@@ -34,18 +34,19 @@ binds archive type/hash and requires the exact PHP security release.
 - Final image `docker run --rm --network none --entrypoint php ...` probe: PASS, exact PHP `8.3.36`, all 14 required modules, CE `7.7.0`, build `261020`, schema `717`. `docker run --rm --network none --entrypoint php-fpm ... -t`: PASS. Image inspection confirms `amd64` and the configured HEALTHCHECK, 30s interval/start period, 5s timeout, 3 retries. Docker format is explicit because the installed Podman default OCI format omits HEALTHCHECK.
 - Native ARM64 build, installer/public browser/export/restart acceptance, fresh CVE scans and signed three-component publication were not executed in this local source slice. The AMD64 image is diagnostic acceptance, not a production release.
 
-## Migration gate
+## Historical migration gate, superseded for the fresh OCI installation
 
 The existing operational controller's restore/migration path requires schema
 712 and verifies 712-to-717 changes. The live source and this release both use
-717; migration to OCI needs a reviewed schema-717 adapter and restore rehearsal
-before backup/cutover execution. New code/config/plugin/theme/runtime volume
-names prevent old upstream files masking the new image. Operator configuration,
-security identity and uploads must be restored deliberately from paired backup.
+717. A data-preserving transfer would require a separate reviewed adapter and
+restore rehearsal, but that path is retired for the authorized empty OCI install.
+New code/config/plugin/theme/runtime volume names prevent old upstream files
+masking the new image.
 
 No prior 7.5 Git-source receipt can admit this candidate. Fresh exact-source
-native ARM64 CI/build, browser/installer/export/restart checks, security scans,
-three-component signing and paired backup/restore remain required before release.
+native ARM64 CI/build, browser/installer/export/restart checks, security scans
+and three-component signing remain required. The 2026-10-22 fresh OCI decision
+discards old LimeSurvey data; paired backup/restore is not a gate for that path.
 
 ## Companion remediation after CI feedback
 
@@ -63,7 +64,7 @@ pin was obsolete in these indexes.
 
 Verification commands and results:
 
-- `PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s tests -p 'test_*gate.py'`: PASS, 195 tests including the separate crosshost source slice. Added explicit prior-Go-stdlib rejection and older-libexpat consistent inventory/scan/SBOM rejection.
+- Historical source-slice check before the fresh decision: 195 tests including the then-present cross-host adapter. That adapter has been retired from the current candidate. Explicit prior-Go-stdlib rejection and older-libexpat consistent inventory/scan/SBOM rejection remain.
 - `PYTHONDONTWRITEBYTECODE=1 python3 tests/functional-smoke.py self-test`: PASS, 11 tests.
 - `docker build --pull --layers --format docker --platform linux/amd64 --file docker/nginx/Dockerfile --tag localhost/limesurvey-nginx:expat290 docker/nginx`: PASS. Local config `sha256:dfaf5d66e82e1b66485d968593a5b9f31e27f674ff199c45696a96d07e8d12b1`. Independent `/lib/apk/db/installed` extraction confirms all four exact patches. `/etc/alpine-release` remains 3.24.2; `nginx -t`: PASS.
 - `NGINX_IMAGE=sha256:dfaf5d66e82e1b66485d968593a5b9f31e27f674ff199c45696a96d07e8d12b1 FPM_IMAGE=sha256:a26f169992ec21469df19281e8ba8f50878da289ff0395d428b0658acd9c7bd6 CONTAINER_ENGINE=podman ./tests/nginx-security-smoke.sh`: PASS, health/config/static/FastCGI HTTPS/path/proxy, seven protected paths and unexpected PHP denial; owned cleanup passed.

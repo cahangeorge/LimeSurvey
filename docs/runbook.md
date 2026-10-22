@@ -1,6 +1,6 @@
 # LimeSurvey Coolify Runbook
 
-This runbook operates the pinned deployment wrapper in this repository. It deliberately keeps Formbricks independent and online until the migration and cutover checkpoints in the implementation plan pass.
+This runbook retains historical deployment and migration procedures. For the authorized 2026-10-22 fresh OCI installation, do not run its source backup or restore steps; use the reviewed fresh adapter and protected operator instructions. Keep Formbricks independent and online under its separate gates.
 
 ## Safety rules
 
@@ -195,16 +195,18 @@ provider acceptance and actual mailbox delivery are independently recorded.
 ## 8. Upgrade
 
 1. Review the LimeSurvey release notes and database migration requirements.
-2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
+2. Update the upstream distribution version/source type, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
 3. Run the full local gate, dependency/secret review, and native ARM64 build.
 4. Produce and restore-test a fresh production backup.
 5. Deploy in a maintenance window, verify database migrations, browser behavior, plugin availability, persistence, and a Resend test delivery.
 6. Retain the previous Git revision, image, database dump, and application-volume archive until the rollback window closes.
 
-For the current `7.5.0+261001` candidate, the source archive checksum is
-`88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493` and the
-required schema is 717. Fresh `app-code-v7-5-0`, `app-config-v7-5-0`,
-`app-plugins-v7-5-0`, `app-themes-v7-5-0` and `app-runtime-v7-5-0` volumes are
+For the current `7.7.0+261020` candidate, the official ZIP checksum is
+`925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`.
+The admitted ZIP declares schema 717. The historical controller only supports
+the 712-to-717 upgrade and is not part of the fresh OCI installation. Fresh
+`app-code-v7-7-0`, `app-config-v7-7-0`, `app-plugins-v7-7-0`,
+`app-themes-v7-7-0` and `app-runtime-v7-7-0` volumes are
 necessary: populated mounts hide new application files, including upstream
 plugins/themes, `version.php`, configuration defaults and compiled runtime caches.
 Operational volumes containing upstream files must identify the accepted app

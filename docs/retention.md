@@ -161,6 +161,13 @@ with recoverable private backups and reconcile it against active IDs after any
 restore. Restoring an older database can reintroduce deleted responses: quarantine
 collection and perform retention reconciliation before reopening it. Loss of the
 ledger cannot be repaired by assigning current ages to existing responses.
+Giving a full database backup a 365-day expiry is insufficient: a response near
+its own deadline could remain in that backup for almost another year. Because
+anonymous rows do not carry their real submission times, either exclude both
+response tables from recoverable backups or use the private ID-age ledger to
+remove each response from every copy before its own deadline. Inventory and
+verify platform snapshots and external object-storage copies as well as local
+archives; absence of a host backup timer does not prove that no copies exist.
 
 ## Local checks
 

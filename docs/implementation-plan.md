@@ -38,6 +38,31 @@ LimeSurvey installation is retired. The earlier cross-host restore adapter is
 retired for this decision. Operational instructions stay in protected local
 documentation.
 
+## 2026-10-22 anonymous response retention slice
+
+The user chose a maximum retention of 365 days for the two new site surveys.
+Both drafts are inactive and use anonymized responses without date stamps.
+LimeSurvey intentionally replaces anonymous submission dates with a fixed
+value, so a date-column cleanup would be incorrect. Keep those privacy settings.
+
+Before activating either survey, add a narrowly scoped response-ID cohort
+ledger and a persistent OCI timer. The ledger must contain IDs and coarse age
+bounds only; read IDs through LimeSurvey RemoteControl's field-limited export and
+delete only the two configured surveys through its `delete_response` method.
+Fail closed on an unknown survey, active survey without an initialized ledger,
+unsafe configuration, malformed export, missed/failed scan, or partial deletion.
+Test the retention algorithm with synthetic IDs and a synthetic integration
+survey before live activation. The public 365-day wording is gated on an active
+timer, catch-up/monitoring proof and a deletion roundtrip. Backups and archived
+response tables need their own lifecycle policy.
+
+This scoped extension requires six files rather than the normal five-file
+limit: `scripts/retention.py`, `tests/test_retention.py`,
+`deploy/limesurvey-retention.service`, `deploy/limesurvey-retention.timer`,
+`docs/retention.md`, and this plan. Source implementation and tests are a local
+phase; installing the timer and activating surveys are separate verified
+operational steps.
+
 ## 2026-10-22 companion CI remediation slice
 
 CI run 39776804915 established the application ARM64 build, Compose smoke and

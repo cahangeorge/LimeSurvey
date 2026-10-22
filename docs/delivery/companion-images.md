@@ -4,7 +4,7 @@ The PHP application release and the Nginx/MariaDB services are separate artifact
 The verified application is promoted by digest; adding a companion recipe does
 not rebuild or promote that release automatically.
 
-`docker/nginx/Dockerfile` retains the immutable official Nginx1.30.5 Alpine3.24
+`docker/nginx/Dockerfile` retains the immutable official Nginx1.30.6 Alpine3.24.3
 base and its entrypoint/modules. It upgrades exactly libexpat2.9.0-r0,
 libpng1.6.59-r0, libx11 1.8.14-r0, musl-utils 1.2.6-r3, pcre2 10.49-r0 and tiff4.7.2-r0 to address the corresponding
 reported package findings. TIFF4.7.2-r0 is the Alpine3.24 fix for CVE-2026-4775
@@ -58,7 +58,7 @@ and DB freshness helpers, with separate Nginx-specific identity validation. The
 candidate's independent installed APK inventory must match its complete exported
 image scan, including the six exact patched versions. Trivy0.75.0 is pinned by
 its ARM64 archive checksum. DBv2 must be updated within48hours and downloaded
-within24hours, with at most5minutes of future clock skew. Alpine3.24.2 and no EOL
+within24hours, with at most5minutes of future clock skew. Alpine3.24.3 and no EOL
 flag are required. HIGH, CRITICAL, UNKNOWN and malformed severities block
 publication; LOW/MEDIUM remain in retained findings. No ignore/config file,
 ignore-unfixed or severity suppression is used.
@@ -71,8 +71,8 @@ platform/provenance and complete package/version coverage in the final scan.
 CycloneDX1.7 is converted from that same final JSON and must bind the same image
 and cover every scanned APK with a unique library component whose name, full
 version, PURL and bom-ref agree. APK PURLs require matching decoded package
-identity and exactly arch=aarch64/distro=3.24.2 qualifiers. The scan target must
-match its artifact reference followed by `(alpine 3.24.2)`. Evidence is uploaded for30days even on
+identity and exactly arch=aarch64/distro=3.24.3 qualifiers. The scan target must
+match its artifact reference followed by `(alpine 3.24.3)`. Evidence is uploaded for30days even on
 failure; tokens, auth configuration and exported image archives are excluded.
 
 The final `release.json` binds source/run/attempt, both tested local config IDs,
@@ -117,7 +117,8 @@ libexpat 2.9.0-r0. Other reviewed pins remain available at their exact versions.
 Dockerfile, independent package admission, workflow inventory assertion and
 regression fixtures now require 2.9.0-r0. A mutually consistent older
 inventory/scan/SBOM cannot bypass the new package requirement. The immutable
-Nginx base and OS 3.24.2 admission stay unchanged.
+Nginx base and OS 3.24.2 admission stayed unchanged in that historical slice;
+the 1.30.6 security remediation below supersedes them.
 
 Local AMD64 build and isolated FastCGI/protected-path smoke passed. Full native
 ARM64 security/runtime/signature acceptance remains pending for the new source.
@@ -130,3 +131,26 @@ that the application functional roundtrip and MariaDB canary passed. Both
 additional Nginx package versions are now exact pins in the recipe, independent
 admission and CI inventory assertion; native ARM64 scan and proxy smoke must
 pass again before the candidate is accepted.
+
+## 2026-10-22 Nginx 1.30.6 security remediation
+
+The fresh Trivy database in release-gate run 39850870785 found three HIGH
+issues in unchanged Nginx 1.30.5-r1: CVE-2026-15176, CVE-2026-93479 and
+CVE-2026-97205. The previous successful run had an identical installed APK
+inventory; the newer vulnerability data changed the verdict. The official
+[Nginx advisory](https://nginx.org/en/security_advisories.html) identifies
+1.30.6 as a fixed stable release. The source candidate now pins the official
+`nginx:1.30.6-alpine3.24` multi-platform index
+`sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951`.
+Its ARM64 child is
+`sha256:4f7cab9e1cd018f80e67f31e02dc0c6d18560b19504461c4f3dd37e5c63a74c5`.
+The index and immutable layers were read back from the official registry:
+Alpine 3.24.3, Nginx 1.30.6-r1, and the six existing exact APK pins. The
+severity threshold, complete APK coverage and proxy smoke remain unchanged.
+
+Local source checks: 11 Nginx release-gate tests, an AMD64 image build from the
+pinned digest and `nginx -t` passed. This is not ARM64 or production acceptance.
+Native ARM64 build, fresh vulnerability scan, HTTP/FastCGI smoke and exact-source
+release checks must pass before publishing a new companion image. The running
+OCI Nginx remains at 1.30.5 until a separately reviewed replacement is selected
+and deployed.

@@ -54,6 +54,24 @@ companion/MariaDB documentation, this plan and maintenance evidence. Validate
 package availability, run the offline suite and targeted local builds/probes.
 Native ARM64 regression/security/signing acceptance must rerun in CI.
 
+## 2026-10-22 Nginx 1.30.6 security remediation slice
+
+The fresh vulnerability database in CI run 39850870785 rejected three HIGH
+findings in the unchanged Nginx 1.30.5 companion. Replace its official base
+with Nginx 1.30.6 Alpine 3.24.3 pinned by immutable multi-platform index;
+preserve the six exact APK pins, severity threshold, image identity checks and
+proxy smoke. Update the Nginx-specific CI/release version assertions and
+fixtures. Do not change the development Compose default or the live OCI image
+in this source slice.
+
+Seven files are required: `docker/nginx/Dockerfile`,
+`.github/workflows/release-gate.yml`, `.github/workflows/nginx-release.yml`,
+`scripts/ci/nginx-release.py`, `tests/test_nginx_release_gate.py`,
+`docs/delivery/companion-images.md`, and this plan. The source implementation
+is first checked in its five-file scope; review this extension before updating
+the delivery document. Native ARM64 build, fresh scan, HTTP/FastCGI smoke and
+full release gates must pass before any artifact promotion or production change.
+
 ## Architecture decisions
 
 1. **Parallel replacement, not in-place mutation.** LimeSurvey receives a separate Coolify application, database, volumes, and `survey.omnestack.com` hostname. Formbricks remains untouched until acceptance checks pass.

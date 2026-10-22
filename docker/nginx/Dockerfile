@@ -1,5 +1,5 @@
 # Keep the official Nginx runtime and entrypoint; patch only affected APKs.
-FROM nginx:1.30.5-alpine3.24@sha256:0985e772fb9f729e6fa0980da05fca5d9c468e870eed43071545afa9d2e27d94
+FROM nginx:1.30.6-alpine3.24@sha256:47928bf67eb62a1863cb08d9ecb52d3e704304ba614eaee17884204677702951
 
 RUN apk add --no-cache --upgrade \
         libexpat=2.9.0-r0 \

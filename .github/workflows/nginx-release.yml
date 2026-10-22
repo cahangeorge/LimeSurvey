@@ -58,7 +58,7 @@ jobs:
             --provenance=false --sbom=false --file docker/nginx/Dockerfile \
             --label "org.opencontainers.image.source=https://github.com/cahangeorge/LimeSurvey" \
             --label "org.opencontainers.image.revision=$GITHUB_SHA" \
-            --label "org.opencontainers.image.version=1.30.5-alpine3.24.2" \
+            --label "org.opencontainers.image.version=1.30.6-alpine3.24.3" \
             --label "io.omnestack.limesurvey.component=nginx" \
             --tag "$RELEASE_TAG" docker/nginx
           docker image inspect --format '{{.Id}}' "$RELEASE_TAG" > "$RUNNER_TEMP/tested-image-id"

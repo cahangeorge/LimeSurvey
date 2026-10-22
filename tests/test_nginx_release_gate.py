@@ -30,13 +30,13 @@ def fixture():
               'org.opencontainers.image.revision': SHA, 'org.opencontainers.image.version': gate.VERSION,
               'io.omnestack.limesurvey.component': 'nginx'}
     image = [{'Id': ID, 'Os': 'linux', 'Architecture': 'arm64', 'Config': {'Labels': labels}, 'RepoDigests': [ref]}]
-    inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': [['libexpat', '2.9.0-r0'], ['libpng', '1.6.59-r0'],
+    inventory = {'os_family': 'alpine', 'os_version': '3.24.3', 'os': [['libexpat', '2.9.0-r0'], ['libpng', '1.6.59-r0'],
                    ['libx11', '1.8.14-r0'], ['musl-utils', '1.2.6-r3'], ['pcre2', '10.49-r0'], ['tiff', '4.7.2-r0']]}
-    packages = [{'Name': n, 'Version': v, 'Identifier': {'PURL': 'pkg:apk/alpine/' + n + '@' + v + '?arch=aarch64&distro=3.24.2'}} for n, v in inventory['os']]
+    packages = [{'Name': n, 'Version': v, 'Identifier': {'PURL': 'pkg:apk/alpine/' + n + '@' + v + '?arch=aarch64&distro=3.24.3'}} for n, v in inventory['os']]
     report = {'SchemaVersion': 2, 'ArtifactName': ref, 'ArtifactType': 'container_image', 'Trivy': {'Version': '0.75.0'},
               'Metadata': {'ImageID': ID, 'RepoDigests': [ref], 'ImageConfig': {'architecture': 'arm64', 'os': 'linux'},
-                           'OS': {'Family': 'alpine', 'Name': '3.24.2', 'Eosl': False}},
-              'Results': [{'Target': ref + ' (alpine 3.24.2)', 'Class': 'os-pkgs', 'Type': 'alpine', 'Packages': packages, 'Vulnerabilities': [{'Severity': 'LOW'}, {'Severity': 'MEDIUM'}]}]}
+                           'OS': {'Family': 'alpine', 'Name': '3.24.3', 'Eosl': False}},
+              'Results': [{'Target': ref + ' (alpine 3.24.3)', 'Class': 'os-pkgs', 'Type': 'alpine', 'Packages': packages, 'Vulnerabilities': [{'Severity': 'LOW'}, {'Severity': 'MEDIUM'}]}]}
     db = {'Version': 2, 'UpdatedAt': NOW.isoformat(), 'DownloadedAt': NOW.isoformat()}
     sbom = {'bomFormat': 'CycloneDX', 'specVersion': '1.7', 'metadata': {'component': {'type': 'container', 'name': ref,
              'properties': [{'name': 'aquasecurity:trivy:ImageID', 'value': ID}]}}, 'components': [{'type': 'library', 'name': p['Name'], 'version': p['Version'],
@@ -55,7 +55,7 @@ def write_evidence(root):
     candidate = copy.deepcopy(report)
     candidate['ArtifactName'] = '/tmp/nginx-candidate.tar'
     candidate['ArtifactID'] = ID
-    candidate['Results'][0]['Target'] = candidate['ArtifactName'] + ' (alpine 3.24.2)'
+    candidate['Results'][0]['Target'] = candidate['ArtifactName'] + ' (alpine 3.24.3)'
     branch = {'protected': True, 'commit': {'sha': sha}}
     runs = {'workflow_runs': [{'id': 42, 'run_attempt': 1, 'head_sha': sha, 'head_branch': 'main',
                               'event': 'push', 'path': '.github/workflows/release-gate.yml',
@@ -88,7 +88,7 @@ class NginxReleaseGateTest(unittest.TestCase):
                 for package in data[4]['os']:
                     if package[0] == name:
                         package[1] = old_version
-                old_purl = 'pkg:apk/alpine/' + name + '@' + old_version + '?arch=aarch64&distro=3.24.2'
+                old_purl = 'pkg:apk/alpine/' + name + '@' + old_version + '?arch=aarch64&distro=3.24.3'
                 for package in data[3]['Results'][0]['Packages']:
                     if package['Name'] == name:
                         package['Version'] = old_version
@@ -147,7 +147,7 @@ class NginxReleaseGateTest(unittest.TestCase):
     def test_rejects_target_purl_and_sbom_identity_mutations(self):
         mutations = [
             lambda x: x[3]['Results'][0].pop('Target'),
-            lambda x: x[3]['Results'][0].__setitem__('Target', 'wrong (alpine 3.24.2)'),
+            lambda x: x[3]['Results'][0].__setitem__('Target', 'wrong (alpine 3.24.3)'),
             lambda x: x[6]['components'][0].__setitem__('type', 'container'),
             lambda x: x[6]['components'][0].pop('name'),
             lambda x: x[6]['components'][0].__setitem__('name', 'wrong'),
@@ -155,12 +155,12 @@ class NginxReleaseGateTest(unittest.TestCase):
             lambda x: x[6]['components'][0].pop('bom-ref'),
             lambda x: x[6]['components'].append(copy.deepcopy(x[6]['components'][0])),
         ]
-        bad_purls = ['pkg:broken', 'pkg:apk/alpine/wrong@2.9.0-r0?arch=aarch64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@old?arch=aarch64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=amd64&distro=3.24.2',
+        bad_purls = ['pkg:broken', 'pkg:apk/alpine/wrong@2.9.0-r0?arch=aarch64&distro=3.24.3',
+                     'pkg:apk/alpine/libexpat@old?arch=aarch64&distro=3.24.3',
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=amd64&distro=3.24.3',
                      'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&distro=3.24.1',
-                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&arch=aarch64&distro=3.24.2',
-                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&distro=3.24.2#fragment']
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&arch=aarch64&distro=3.24.3',
+                     'pkg:apk/alpine/libexpat@2.9.0-r0?arch=aarch64&distro=3.24.3#fragment']
         for purl in bad_purls:
             mutations.append(lambda x, p=purl: x[3]['Results'][0]['Packages'][0]['Identifier'].__setitem__('PURL', p))
         for mutate in mutations:
@@ -182,11 +182,11 @@ class NginxReleaseGateTest(unittest.TestCase):
 
     def test_accepts_encoded_apk_name_and_real_os_component(self):
         data = fixture()
-        purl = 'pkg:apk/alpine/libstdc%2B%2B@16.1.0-r0?arch=aarch64&distro=3.24.2'
+        purl = 'pkg:apk/alpine/libstdc%2B%2B@16.1.0-r0?arch=aarch64&distro=3.24.3'
         data[4]['os'].append(['libstdc++', '16.1.0-r0'])
         data[3]['Results'][0]['Packages'].append({'Name': 'libstdc++', 'Version': '16.1.0-r0', 'Identifier': {'PURL': purl}})
         data[6]['components'].extend([{'type': 'library', 'name': 'libstdc++', 'version': '16.1.0-r0', 'purl': purl, 'bom-ref': purl},
-                                      {'type': 'operating-system', 'name': 'alpine', 'version': '3.24.2', 'bom-ref': 'os-reference'}])
+                                      {'type': 'operating-system', 'name': 'alpine', 'version': '3.24.3', 'bom-ref': 'os-reference'}])
         self.assertEqual(gate.validate_image(*data), {'os_packages': 7})
 
     def test_approved_fpm_mutations(self):
@@ -231,7 +231,7 @@ class NginxReleaseGateTest(unittest.TestCase):
         report = data[3]
         report['ArtifactName'] = '/tmp/candidate.tar'
         report['ArtifactID'] = ID
-        report['Results'][0]['Target'] = report['ArtifactName'] + ' (alpine 3.24.2)'
+        report['Results'][0]['Target'] = report['ArtifactName'] + ' (alpine 3.24.3)'
         gate.validate_scan(report, data[4], data[5], ID, '/tmp/candidate.tar', NOW)
         for field, wrong in [('ArtifactName', '/tmp/another.tar'), ('ArtifactID', 'wrong')]:
             mutated = copy.deepcopy(report)

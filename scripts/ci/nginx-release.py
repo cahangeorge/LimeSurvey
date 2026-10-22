@@ -16,7 +16,7 @@ shared = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(shared)
 require = shared.require
 IMAGE = 'ghcr.io/cahangeorge/limesurvey-nginx'
-VERSION = '1.30.5-alpine3.24.2'
+VERSION = '1.30.6-alpine3.24.3'
 PATCHES = {'libexpat': '2.9.0-r0', 'libpng': '1.6.59-r0', 'libx11': '1.8.14-r0',
            'musl-utils': '1.2.6-r3', 'pcre2': '10.49-r0', 'tiff': '4.7.2-r0'}
 FPM_REF = shared.IMAGE + '@sha256:4193d1c9bef626c675381fe2bad07b400bcf5cce56e373c221babae2ce9d3510'
@@ -88,7 +88,7 @@ def apk_purl(purl, name, version):
             and separator and '/' not in package and unquote(package, errors='strict') == name
             and unquote(release, errors='strict') == version, 'APK PURL package identity mismatch')
     qualifiers = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
-    require(len(qualifiers) == 2 and dict(qualifiers) == {'arch': 'aarch64', 'distro': '3.24.2'},
+    require(len(qualifiers) == 2 and dict(qualifiers) == {'arch': 'aarch64', 'distro': '3.24.3'},
             'APK PURL qualifiers mismatch or duplicate')
     return purl
 
@@ -107,8 +107,8 @@ def validate_scan(report, inventory, db, image_id, artifact, now, ref=None):
     require(metadata.get('ImageConfig', {}).get('architecture') == 'arm64'
             and metadata.get('ImageConfig', {}).get('os') == 'linux', 'wrong scanned platform')
     os = metadata['OS']
-    require(inventory.get('os_family') == 'alpine' and inventory.get('os_version') == '3.24.2'
-            and os.get('Family') == 'alpine' and os.get('Name') == '3.24.2'
+    require(inventory.get('os_family') == 'alpine' and inventory.get('os_version') == '3.24.3'
+            and os.get('Family') == 'alpine' and os.get('Name') == '3.24.3'
             and os.get('Eosl', False) is False and os.get('EOSL', False) is False, 'unsupported OS/version or EOL')
     shared.check_db(db, now)
     expected = unique_pairs(inventory['os'], 0, 1)
@@ -117,7 +117,7 @@ def validate_scan(report, inventory, db, image_id, artifact, now, ref=None):
     require(isinstance(results, list) and results, 'empty scan results')
     os_results = [r for r in results if r.get('Class') == 'os-pkgs']
     require(len(results) == 1 and len(os_results) == 1 and os_results[0].get('Type') == 'alpine', 'missing/ambiguous APK scan')
-    require(os_results[0].get('Target') == artifact + ' (alpine 3.24.2)', 'scan APK target mismatch')
+    require(os_results[0].get('Target') == artifact + ' (alpine 3.24.3)', 'scan APK target mismatch')
     require(unique_pairs(os_results[0].get('Packages'), 'Name', 'Version') == expected, 'incomplete APK coverage')
     purls = set()
     for result in results:
@@ -160,7 +160,7 @@ def validate_image(raw, digest, inspected, report, inventory, db, sbom, sha, now
     covered = set()
     for component in components:
         if component.get('type') == 'operating-system':
-            require(component.get('name') == 'alpine' and component.get('version') == '3.24.2'
+            require(component.get('name') == 'alpine' and component.get('version') == '3.24.3'
                     and not component.get('purl'), 'SBOM OS component mismatch')
             continue
         require(component.get('type') == 'library', 'SBOM package component type mismatch')
@@ -177,7 +177,7 @@ def extract_inventory(image):
         return subprocess.check_output(['docker', 'run', '--rm', '--network', 'none', '--entrypoint', 'cat',
                                         image, path], text=True, timeout=120)
     family, version = shared.parse_os_release(run('/etc/os-release'))
-    require((family, version) == ('alpine', '3.24.2'), 'wrong runtime OS')
+    require((family, version) == ('alpine', '3.24.3'), 'wrong runtime OS')
     return {'os_family': family, 'os_version': version, 'os': shared.parse_apk_inventory(run('/lib/apk/db/installed'))}
 
 

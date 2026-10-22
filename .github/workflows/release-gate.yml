@@ -244,7 +244,7 @@ jobs:
           assert inspect[0]['Architecture']=='arm64' and inspect[0]['Os']=='linux'
           scan=json.loads((p/'scan.json').read_text()); metadata=scan['Metadata']
           assert metadata['ImageID']==image_id and metadata['ImageConfig']['architecture']=='arm64'
-          assert metadata['OS']['Family']=='alpine' and metadata['OS']['Name']=='3.24.2'
+          assert metadata['OS']['Family']=='alpine' and metadata['OS']['Name']=='3.24.3'
           assert not metadata['OS'].get('EOSL',False)
           installed={}
           for record in (p/'installed-apk.txt').read_text().strip().split('\n\n'):

@@ -69,7 +69,7 @@ class OperationalGateTests(unittest.TestCase):
                       'state_file': str(self.root / 'state.json')}
         now = datetime.now(timezone.utc).isoformat()
         bundle = {'schema_version': 1, 'source_commit': 'b' * 40,
-                  'upstream_commit': 'c5a2ac817396220e054efc3fd26b84cafb92b36f', 'components': {}}
+                  'upstream_source': {"type": "release-zip", "sha256": "925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d"}, 'components': {}}
         accepted = {}
         for kind in gate.REPOSITORIES:
             evidence = self.root / kind; evidence.mkdir()
@@ -86,7 +86,7 @@ class OperationalGateTests(unittest.TestCase):
         bundle_path = self.root / 'bundle.json'; write(bundle_path, bundle)
         receipt_path = self.root / 'admission.json'
         receipt = {'schema_version': 1, 'status': 'ARTIFACT_BUNDLE_ADMITTED', 'staging_deployable': False,
-                   'source_commit': bundle['source_commit'], 'upstream_commit': bundle['upstream_commit'],
+                   'source_commit': bundle['source_commit'], 'upstream_source': bundle['upstream_source'],
                    'expected_bundle_sha256': digest(bundle_path), 'components': accepted, 'checked_at': now}
         write(receipt_path, receipt)
         self.value['admission'] = {'receipt': str(receipt_path), 'receipt_sha256': digest(receipt_path),

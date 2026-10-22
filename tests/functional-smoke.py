@@ -19,7 +19,7 @@ import unittest
 import urllib.request
 import zipfile
 
-UPSTREAM = 'c5a2ac817396220e054efc3fd26b84cafb92b36f'
+UPSTREAM = {"type": "release-zip", "sha256": "925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d"}
 # Pinned upstream tests/data/surveys/limesurvey_question_import_question_test_II.lsq
 # GitHub source archives exclude tests; retain the exact synthetic fixture here.
 QUESTION_FIXTURE = '''<?xml version="1.0" encoding="UTF-8"?>
@@ -297,7 +297,8 @@ class Roundtrip:
         STAGE = 'image-identity'
         self.source = run(['git', '-C', str(ROOT), 'rev-parse', 'HEAD']).decode().strip()
         inspect = json.loads(run(['docker', 'image', 'inspect', self.image]))[0]
-        require(inspect['Config']['Labels']['io.omnestack.limesurvey.upstream-revision'] == UPSTREAM)
+        require(inspect['Config']['Labels']['io.omnestack.limesurvey.upstream-source-type'] == UPSTREAM['type']
+                and inspect['Config']['Labels']['io.omnestack.limesurvey.upstream-sha256'] == UPSTREAM['sha256'])
         self.image_id = inspect['Id']
         self.architecture = inspect['Architecture']
         self.image_revision = inspect['Config']['Labels']['org.opencontainers.image.revision']
@@ -442,7 +443,7 @@ class Roundtrip:
         require(before == after)
         self.api('release_session_key', key)
         return {'gate': 'PASS', 'source_commit': self.source, 'image_id': self.image_id,
-                'image_revision': self.image_revision, 'upstream_commit': UPSTREAM,
+                'image_revision': self.image_revision, 'upstream_source': UPSTREAM,
                 'platform': 'linux/' + self.architecture, 'browser_version': self.browser_version,
                 'completed_count': 1, 'response_id_sha256': hashlib.sha256(before[0].encode()).hexdigest(),
                 'export_sha256': before[1], 'restart': 'PASS'}

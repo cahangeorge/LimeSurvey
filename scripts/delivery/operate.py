@@ -201,7 +201,7 @@ def manifest(path, expected, local_configuration=True):
     require(receipt.get('status') == 'ARTIFACT_BUNDLE_ADMITTED' and receipt.get('staging_deployable') is False
             and receipt.get('expected_bundle_sha256') == admission['bundle_sha256']
             and receipt.get('source_commit') == bundle['source_commit']
-            and receipt.get('upstream_commit') == bundle['upstream_commit'] == 'c5a2ac817396220e054efc3fd26b84cafb92b36f'
+            and receipt.get('upstream_source') == bundle['upstream_source'] == {"type": "release-zip", "sha256": "925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d"}
             and set(receipt['components']) == set(REPOSITORIES) and set(bundle['components']) == set(REPOSITORIES))
     recent(receipt['checked_at'], 3600)
     for kind in REPOSITORIES:

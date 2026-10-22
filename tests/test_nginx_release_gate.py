@@ -31,7 +31,7 @@ def fixture():
               'io.omnestack.limesurvey.component': 'nginx'}
     image = [{'Id': ID, 'Os': 'linux', 'Architecture': 'arm64', 'Config': {'Labels': labels}, 'RepoDigests': [ref]}]
     inventory = {'os_family': 'alpine', 'os_version': '3.24.2', 'os': [['libexpat', '2.9.0-r0'], ['libpng', '1.6.59-r0'],
-                   ['pcre2', '10.49-r0'], ['tiff', '4.7.2-r0']]}
+                   ['libx11', '1.8.14-r0'], ['musl-utils', '1.2.6-r3'], ['pcre2', '10.49-r0'], ['tiff', '4.7.2-r0']]}
     packages = [{'Name': n, 'Version': v, 'Identifier': {'PURL': 'pkg:apk/alpine/' + n + '@' + v + '?arch=aarch64&distro=3.24.2'}} for n, v in inventory['os']]
     report = {'SchemaVersion': 2, 'ArtifactName': ref, 'ArtifactType': 'container_image', 'Trivy': {'Version': '0.75.0'},
               'Metadata': {'ImageID': ID, 'RepoDigests': [ref], 'ImageConfig': {'architecture': 'arm64', 'os': 'linux'},
@@ -78,10 +78,11 @@ def write_evidence(root):
 
 class NginxReleaseGateTest(unittest.TestCase):
     def test_valid_final_preserves_low_medium(self):
-        self.assertEqual(gate.validate_image(*fixture()), {'os_packages': 4})
+        self.assertEqual(gate.validate_image(*fixture()), {'os_packages': 6})
 
     def test_rejects_older_patches_with_consistent_inventory_scan_and_sbom(self):
-        for name, old_version in (('tiff', '4.7.1-r0'), ('libexpat', '2.8.5-r0')):
+        for name, old_version in (('tiff', '4.7.1-r0'), ('libexpat', '2.8.5-r0'),
+                                  ('libx11', '1.8.13-r0'), ('musl-utils', '1.2.6-r2')):
             with self.subTest(package=name):
                 data = fixture()
                 for package in data[4]['os']:
@@ -186,7 +187,7 @@ class NginxReleaseGateTest(unittest.TestCase):
         data[3]['Results'][0]['Packages'].append({'Name': 'libstdc++', 'Version': '16.1.0-r0', 'Identifier': {'PURL': purl}})
         data[6]['components'].extend([{'type': 'library', 'name': 'libstdc++', 'version': '16.1.0-r0', 'purl': purl, 'bom-ref': purl},
                                       {'type': 'operating-system', 'name': 'alpine', 'version': '3.24.2', 'bom-ref': 'os-reference'}])
-        self.assertEqual(gate.validate_image(*data), {'os_packages': 5})
+        self.assertEqual(gate.validate_image(*data), {'os_packages': 7})
 
     def test_approved_fpm_mutations(self):
         raw = FPM_RAW

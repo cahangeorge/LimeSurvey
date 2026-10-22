@@ -64,6 +64,22 @@ forwarder. Additional parameters, encoded variants and fragments are rejected. T
 host/forwarder supplies the transport boundary; do not expose it externally.
 The job ignores environment proxy settings and systemd allows loopback only.
 
+On the installed 7.7.0 build, create the account through **Configuration → Users →
+User management** and set its password directly. It needs only global **Use
+internal database authentication → View/read** (`auth_db/read`) to authenticate
+through RemoteControl; leave other global permissions unset. In **Survey
+permissions** for each intended survey, grant **Survey → View/read**
+(`survey/read`), **Survey settings → View/read** (`surveysettings/read`), and
+**Responses → View/read, Export, Delete** (`responses/read`,
+`responses/export`, `responses/delete`). Do not select the General row, which
+grants all actions. Remove any default theme-read grant if it is unnecessary.
+Verify access to both intended surveys, denial for a third survey, and denial
+of settings changes and survey activation. Test deletion with the same
+permission matrix on a disposable survey, not on a real response. LimeSurvey's
+permission model allows this account to export all response fields within its
+two surveys; the script's `aFields=['id']` is an application-level limit, not
+an API permission boundary.
+
 Create `/etc/limesurvey-retention` and `/var/lib/limesurvey-retention` as directories
 owned by this user with mode `0700`. Create
 `/etc/limesurvey-retention/config.json`, owned by this user with mode `0600`:

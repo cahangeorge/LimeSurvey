@@ -1,10 +1,10 @@
 # Spec: Replace Formbricks with LimeSurvey on Coolify
 
 ## Status
-Approved by the user on 2026-09-17. No Formbricks data, container, volume, domain, or DNS record may be deleted until the pre-cutover backup is verified. Permanent deletion still requires a separate, explicit final approval after the rollback window.
+Approved by the user on 2026-09-17. The 2026-10-22 decision replaces the old LimeSurvey data migration with a fresh, empty OCI installation and authorizes removal of only old LimeSurvey resources after target acceptance. Formbricks retains its separate backup, rollback and final deletion requirements.
 
 ## Objective
-Replace the shared Formbricks survey service with a self-hosted LimeSurvey Community Edition service in Coolify `tools/production`, suitable for Georgiana Daycare and future platforms.
+Replace the shared Formbricks survey service with a self-hosted LimeSurvey Community Edition service on OCI, migrating from the current OmneStack service in Coolify `tools/production`, suitable for Georgiana Daycare and future platforms.
 
 The replacement must:
 - keep the current Formbricks service online during build and validation;
@@ -16,24 +16,23 @@ The replacement must:
 
 ## Assumptions for approval
 1. Deploy LimeSurvey as a separate Compose application alongside Formbricks first, not as an in-place replacement.
-2. Pin the official LimeSurvey Git tag `7.5.0+261001` (commit `c5a2ac817396220e054efc3fd26b84cafb92b36f`) rather than following `master`.
+2. Pin the official LimeSurvey CE ZIP `7.7.0+261020`, SHA-256 `925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`. No Git commit is asserted for this distribution.
 3. Maintain a small deployment fork/wrapper repository named `cahangeorge/LimeSurvey` containing the Compose/Docker deployment and a Resend HTTPS email plugin; upstream LimeSurvey has no production Dockerfile or Compose definition.
 4. Use `survey.omnestack.com` as the canonical LimeSurvey hostname, then redirect or preserve `feedback.omnestack.com` for compatibility after cutover.
 5. Archive Formbricks surveys/responses and keep a restorable backup for 7 days after cutover. Do not claim automatic survey migration: Formbricks and LimeSurvey use different survey schemas, so survey recreation/import mapping is a separate verified step.
 6. LimeSurvey takes priority now; Stalwart remains queued for a later phase and is not a dependency of this deployment.
 
-The original 7.1.1 pin is superseded by the reviewed 2026-10-11 maintenance
-candidate above. The [pinned official release notes](https://github.com/LimeSurvey/LimeSurvey/blob/c5a2ac817396220e054efc3fd26b84cafb92b36f/docs/release_notes.txt)
+The original 7.1.1 pin and the 2026-10-11 Git-source 7.5.0 candidate are superseded by the 2026-10-22 ZIP-source candidate above. The [pinned official release notes](https://github.com/LimeSurvey/LimeSurvey/blob/c5a2ac817396220e054efc3fd26b84cafb92b36f/docs/release_notes.txt)
 document eleven application security fixes after 7.1.1. OS/Composer inventory
 alone does not establish application-source security. New native functional and
 strict artifact security/signing acceptance is mandatory before deployment.
 
 ## Tech stack
-- LimeSurvey Community Edition `7.5.0+261001`, pinned by immutable Git commit.
-- PHP 8.3 FPM with required/recommended extensions.
+- LimeSurvey Community Edition `7.7.0+261020`, pinned by official release ZIP SHA-256.
+- PHP 8.3.36 FPM with required/recommended extensions, pinned by immutable multi-architecture image digest.
 - Nginx reverse proxy.
 - MariaDB 11.4 LTS, pinned to an explicit image tag.
-- Docker Compose deployed by Coolify on the existing ARM64 server.
+- Docker Compose on the OCI ARM64 target, managed through the reviewed fresh-install deployment path. No old LimeSurvey data is imported.
 - Persistent named volumes for database, LimeSurvey upload files, plugins, themes/customizations, and writable runtime configuration.
 - Custom LimeSurvey email plugin using the Resend `POST /emails` HTTPS API and `RESEND_API_KEY` from runtime environment; no secret stored in Git or logged.
 

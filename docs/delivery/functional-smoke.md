@@ -163,3 +163,11 @@ global namespace settings, and does not configure the laptop or deployment
 server. The profile disappears with the disposable hosted runner.
 
 Reference: [Ubuntu 24.04 namespace sandbox policy](https://documentation.ubuntu.com/release-notes/24.04/#unprivileged-user-namespace-restrictions).
+
+## 2026-10-22 distribution update
+
+The current source policy is the official CE 7.7.0+261020 ZIP, SHA-256
+`925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`.
+Functional smoke now requires its source-type/archive-hash labels and records
+`upstream_source`; the historical Git-source evidence above does not establish
+new runtime acceptance. PHP is pinned to 8.3.36.

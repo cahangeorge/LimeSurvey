@@ -1,5 +1,7 @@
 # ADR0001: PHP8.3 on Alpine3.24 for the Resend MVP
 
+The version pins in this historical decision are superseded by the [2026-10-22 maintenance candidate](maintenance-20261022.md): CE 7.7.0+261020 official ZIP and PHP 8.3.36. The Alpine compatibility decision remains in effect; historical test evidence does not establish current artifact acceptance.
+
 Date: 2026-10-04. Decision accepted by the user through the explicit instruction to execute this recommendation. Release/deployment acceptance is separate.
 
 ## Context

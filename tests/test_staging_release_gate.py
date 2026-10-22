@@ -44,7 +44,7 @@ class StagingGateTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
         self.bundle = {'schema_version': 1, 'source_commit': SHA,
-                       'upstream_commit': gate.shared.UPSTREAM, 'components': {}}
+                       'upstream_source': gate.shared.UPSTREAM, 'components': {}}
         self.outputs = {}
         for kind in sorted(gate.COMPONENTS):
             root = self.root / kind
@@ -82,7 +82,7 @@ class StagingGateTests(unittest.TestCase):
             config = json.loads((root / 'image.json').read_text())[0]['Id']
             release = {'schema_version': 1, 'status': status, 'repository': gate.shared.REPOSITORY,
                        'source_commit': SHA, 'config_commit': SHA,
-                       'upstream': {'version': gate.shared.VERSION, 'commit': gate.shared.UPSTREAM},
+                       'upstream': {'version': gate.shared.VERSION, 'source': gate.shared.UPSTREAM},
                        'image': image + '@' + image_digest, key: image_digest, 'image_config_digest': config,
                        'platform': 'linux/arm64', 'scan': {'status': 'PASS'},
                        'ci': json.loads((root / 'ci.json').read_text()), 'release_run': {'id': 123, 'attempt': 1},
@@ -160,7 +160,7 @@ class StagingGateTests(unittest.TestCase):
                 with self.subTest(kind=kind, field=field), self.assertRaises(ValueError): self.check()
         self.bundle = copy.deepcopy(original); self.bundle['source_commit'] = 'b' * 40
         with self.assertRaises(ValueError): self.check()
-        self.bundle = copy.deepcopy(original); self.bundle['upstream_commit'] = 'b' * 40
+        self.bundle = copy.deepcopy(original); self.bundle['upstream_source'] = 'b' * 40
         with self.assertRaises(ValueError): self.check()
 
     def test_current_time_rejects_archival_and_future_scans(self):

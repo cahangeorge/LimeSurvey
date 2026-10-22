@@ -11,8 +11,9 @@ Read these files and run `git status --short --branch` before making changes.
 
 ## Architecture and versions
 
-- Upstream LimeSurvey tag: `7.5.0+261001`
-- Upstream commit: `c5a2ac817396220e054efc3fd26b84cafb92b36f`
+- Upstream LimeSurvey CE ZIP: `7.7.0+261020`
+- Official archive SHA-256: `925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`
+- PHP base: `8.3.36-fpm-alpine3.24`, pinned by immutable multi-arch index
 - Runtime: Nginx, PHP 8.3 FPM, MariaDB 11.4 LTS
 - Target platform: Docker Compose on ARM64 Coolify
 - Email: Resend HTTPS API through a LimeSurvey plugin; do not depend on SMTP ports 465/587
@@ -43,7 +44,7 @@ Commands referring to files not yet implemented are release targets, not permiss
 - Never print or commit `.env` values, database URLs, API keys, administrator credentials, survey exports, response payloads, or backup archives.
 - Do not pipe database dumps through task/deployment logs.
 - Keep Formbricks online until LimeSurvey production acceptance and migration checkpoints pass.
-- The off-server backup gate must pass before cutover.
+- The off-server backup gate applies to any future Formbricks cutover. The approved fresh OCI LimeSurvey installation discards only the old OmneStack LimeSurvey data and requires no source backup or restore.
 - Do not stop Formbricks until the cutover task authorizes it.
 - Do not delete Formbricks containers, volumes, routes, secrets, or backups without a separate final user approval after the seven-day rollback window.
 

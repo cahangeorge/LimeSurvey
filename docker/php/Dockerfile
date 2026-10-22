@@ -1,19 +1,25 @@
-FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS source
+FROM php:8.3.36-fpm-alpine3.24@sha256:81cb692948e6de4275f7e107c50a34e963a440660f2c5b8502d11071f7d30338 AS source
 
-ARG LIMESURVEY_COMMIT=c5a2ac817396220e054efc3fd26b84cafb92b36f
-ARG LIMESURVEY_ARCHIVE_SHA256=88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493
+ARG LIMESURVEY_VERSION=7.7.0+261020
+ARG LIMESURVEY_ARCHIVE_SHA256=925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d
 
 WORKDIR /var/www/html
 
 RUN set -eux; \
-    archive=/tmp/limesurvey.tar.gz; \
+    apk add --no-cache unzip; \
+    archive=/tmp/limesurvey.zip; \
     curl --fail --location --retry 3 --retry-all-errors \
         --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 \
-        "https://github.com/LimeSurvey/LimeSurvey/archive/${LIMESURVEY_COMMIT}.tar.gz" \
+        "https://download.limesurvey.org/latest-master/limesurvey${LIMESURVEY_VERSION}.zip" \
         --output "${archive}"; \
     archive_sha256="$(sha256sum "${archive}")"; \
     test "${archive_sha256%% *}" = "${LIMESURVEY_ARCHIVE_SHA256}"; \
-    tar --extract --gzip --file "${archive}" --strip-components=1 --no-same-owner; \
+    unzip -Z1 "${archive}" > /tmp/limesurvey-members; \
+    awk 'BEGIN { count = 0 } /^\// || /(^|\/)\.\.(\/|$)/ || !/^limesurvey\// { exit 1 } { count++ } END { if (!count) exit 1 }' /tmp/limesurvey-members; \
+    rm -f /tmp/limesurvey-members; \
+    unzip -q "${archive}" -d /tmp/limesurvey-source; \
+    cp -a /tmp/limesurvey-source/limesurvey/. /var/www/html/; \
+    rm -rf /tmp/limesurvey-source; \
     rm -f "${archive}"; \
     install -d -o www-data -g www-data application/config upload tmp plugins themes; \
     chown -R www-data:www-data application/config upload tmp plugins themes
@@ -61,18 +67,19 @@ if ($count < 2) {
 }
 PHP
 
-FROM php:8.3.35-fpm-alpine3.24@sha256:454b11c8907e32878ce92e87b13c14e1bbe6e1b10f4f96d4a19c9b62ec675d41 AS runtime
+FROM php:8.3.36-fpm-alpine3.24@sha256:81cb692948e6de4275f7e107c50a34e963a440660f2c5b8502d11071f7d30338 AS runtime
 
-ARG LIMESURVEY_COMMIT=c5a2ac817396220e054efc3fd26b84cafb92b36f
-ARG LIMESURVEY_ARCHIVE_SHA256=88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493
+ARG LIMESURVEY_VERSION=7.7.0+261020
+ARG LIMESURVEY_ARCHIVE_SHA256=925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d
 ARG WRAPPER_COMMIT=development
 
 LABEL org.opencontainers.image.title="LimeSurvey for Coolify" \
       org.opencontainers.image.description="Pinned LimeSurvey Community Edition PHP-FPM runtime" \
       org.opencontainers.image.source="https://github.com/cahangeorge/LimeSurvey" \
-      org.opencontainers.image.version="7.5.0+261001" \
+      org.opencontainers.image.version="7.7.0+261020" \
       org.opencontainers.image.revision="${WRAPPER_COMMIT}" \
-      io.omnestack.limesurvey.upstream-revision="${LIMESURVEY_COMMIT}" \
+      io.omnestack.limesurvey.upstream-source-type="release-zip" \
+      io.omnestack.limesurvey.upstream-sha256="${LIMESURVEY_ARCHIVE_SHA256}" \
       org.opencontainers.image.licenses="GPL-2.0-or-later"
 
 # Kerberos/GSSAPI is outside this Resend-based MVP; Alpine c-client provides SSL.

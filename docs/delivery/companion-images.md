@@ -6,7 +6,7 @@ not rebuild or promote that release automatically.
 
 `docker/nginx/Dockerfile` retains the immutable official Nginx1.30.5 Alpine3.24
 base and its entrypoint/modules. It upgrades exactly libexpat2.9.0-r0,
-libpng1.6.59-r0, pcre2 10.49-r0 and tiff4.7.2-r0 to address the corresponding
+libpng1.6.59-r0, libx11 1.8.14-r0, musl-utils 1.2.6-r3, pcre2 10.49-r0 and tiff4.7.2-r0 to address the corresponding
 reported package findings. TIFF4.7.2-r0 is the Alpine3.24 fix for CVE-2026-4775
 ([official security database](https://secdb.alpinelinux.org/v3.24/main.json));
 the fixed package is available for aarch64. Repository updates can change
@@ -56,7 +56,7 @@ are validated before smoke. That artifact was accepted by release run
 `scripts/ci/nginx-release.py` reuses the existing pure CI preflight, APK parsing
 and DB freshness helpers, with separate Nginx-specific identity validation. The
 candidate's independent installed APK inventory must match its complete exported
-image scan, including the four exact patched versions. Trivy0.75.0 is pinned by
+image scan, including the six exact patched versions. Trivy0.75.0 is pinned by
 its ARM64 archive checksum. DBv2 must be updated within48hours and downloaded
 within24hours, with at most5minutes of future clock skew. Alpine3.24.2 and no EOL
 flag are required. HIGH, CRITICAL, UNKNOWN and malformed severities block
@@ -122,3 +122,11 @@ Nginx base and OS 3.24.2 admission stay unchanged.
 Local AMD64 build and isolated FastCGI/protected-path smoke passed. Full native
 ARM64 security/runtime/signature acceptance remains pending for the new source.
 See [maintenance evidence](maintenance-20261022.md).
+
+The 2026-10-22 native ARM64 scan of the corrected libexpat candidate also found
+libx11 1.8.13-r0 (HIGH CVE-2026-88806, fixed in 1.8.14-r0) and musl-utils
+1.2.6-r2 (UNKNOWN CVE-2026-107891, fixed in 1.2.6-r3). The same scan confirmed
+that the application functional roundtrip and MariaDB canary passed. Both
+additional Nginx package versions are now exact pins in the recipe, independent
+admission and CI inventory assertion; native ARM64 scan and proxy smoke must
+pass again before the candidate is accepted.

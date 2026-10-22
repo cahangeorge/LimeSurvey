@@ -44,7 +44,7 @@ Commands referring to files not yet implemented are release targets, not permiss
 - Never print or commit `.env` values, database URLs, API keys, administrator credentials, survey exports, response payloads, or backup archives.
 - Do not pipe database dumps through task/deployment logs.
 - Keep Formbricks online until LimeSurvey production acceptance and migration checkpoints pass.
-- The off-server backup gate must pass before cutover.
+- The off-server backup gate applies to any future Formbricks cutover. The approved fresh OCI LimeSurvey installation discards only the old OmneStack LimeSurvey data and requires no source backup or restore.
 - Do not stop Formbricks until the cutover task authorizes it.
 - Do not delete Formbricks containers, volumes, routes, secrets, or backups without a separate final user approval after the seven-day rollback window.
 

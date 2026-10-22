@@ -1,6 +1,6 @@
 # LimeSurvey for Coolify
 
-Deployment wrapper for running [LimeSurvey Community Edition](https://github.com/LimeSurvey/LimeSurvey) on ARM64 OCI infrastructure. The current OmneStack deployment is the migration source; OCI restore rehearsal and cutover remain pending.
+Deployment wrapper for running [LimeSurvey Community Edition](https://github.com/LimeSurvey/LimeSurvey) on ARM64 OCI infrastructure. The 2026-10-22 decision is a new empty OCI installation; old OmneStack LimeSurvey data will not be copied. Only the old LimeSurvey installation may be retired after OCI acceptance. Formbricks remains independent.
 
 ## Status
 
@@ -16,7 +16,7 @@ The current candidate updates LimeSurvey to the hash-pinned 7.7 CE distribution 
 adds a strict MariaDB/gosu derivative. Its native runtime, fresh security scans
 and signed artifacts require new exact-source acceptance; previous success is
 not proof for this candidate. Production remains blocked until those checks,
-real three-image staging, backup/restore, serialized migration and rollback pass.
+real three-image admission and live OCI acceptance pass.
 See [`docs/implementation-plan.md`](docs/implementation-plan.md). Formbricks
 remains independent; operational evidence and secrets stay outside this public repo.
 

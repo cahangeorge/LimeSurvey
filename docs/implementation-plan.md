@@ -1,7 +1,7 @@
 # Implementation Plan: Replace Formbricks with LimeSurvey on Coolify
 
 ## Status
-Approved by the user on 2026-09-17. Implementation proceeds checkpoint by checkpoint; destructive production operations remain separately gated.
+Approved by the user on 2026-09-17. On 2026-10-22 the user chose a fresh OCI LimeSurvey installation, discarded old OmneStack LimeSurvey data, and authorized removal of only that old LimeSurvey installation after OCI acceptance. Formbricks remains under its separate retention and approval gates. Historical migration tasks below do not govern this fresh installation.
 
 ## Overview
 Build a pinned, ARM64-compatible LimeSurvey Community Edition deployment in a public `cahangeorge/LimeSurvey` deployment repository, add Resend delivery over HTTPS, deploy it beside Formbricks in Coolify, verify survey, email, and persistence behavior, then migrate the required survey flows. Formbricks remains available until cutover succeeds. Its data and resources are retained for a seven-day rollback window, after which permanent deletion requires a new explicit approval.
@@ -14,7 +14,7 @@ Update the official CE distribution to `7.7.0+261020`, SHA-256
 `925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`,
 and both PHP stages to `8.3.36-fpm-alpine3.24` pinned by multi-platform index
 `sha256:81cb692948e6de4275f7e107c50a34e963a440660f2c5b8502d11071f7d30338`.
-OCI is the target and OmneStack is the migration source; restore rehearsal and cutover remain pending. This ZIP release has no asserted Git commit. Admission binds the distribution
+OCI is the target for a new empty installation. This ZIP release has no asserted Git commit. Admission binds the distribution
 hash and type through labels, release receipts, bundle admission and operational
 guards. Previous Git-source receipts cannot admit the new distribution.
 
@@ -26,21 +26,17 @@ changes are included. Archive SHA-256 is checked before extraction. Run offline
 gates, functional smoke self-test, Compose/shell/PHP checks and a native ARM64
 build/runtime test where the environment permits; record unavailable gates.
 
-## 2026-10-22 cross-host adapter slice (authorized)
+## 2026-10-22 fresh OCI installation override (authorized)
 
-The sole writer adds `scripts/delivery/crosshost.py` and
-`tests/test_crosshost_delivery_gate.py`, and updates this plan and
-`docs/runbook.md` (four files). The adapter is local to each Docker host: exact
-container/image/mount/network identities, schema 717 only, fenced MyISAM paired
-backup, protected hash-bound transfer receipt, and restore into an empty private
-OCI target. It does not invoke the historical 712-to-717 controller, run
-`updatedb`, resume source writers, deploy, transfer credentials, or publish.
-Source DB publication and extra DB-network clients are rejected before/after
-fencing; its sole DB network must be an internal app+DB-only bridge. The
-`validate` operation performs matching-host runtime/schema preflight;
-`validate-plan` explicitly checks structure only. Existing staging Compose supplies the private target topology. Live artifact
-admission, restore/browser proof, off-host retention, cutover and retirement
-remain separate operator gates.
+The fresh adapter comprises `deploy/compose.oci-fresh.yaml`,
+`scripts/delivery/fresh.py`, tests and this plan. It admits only a new private
+installation from three signed immutable images built from one reviewed source
+commit. The preflight also checks the local checkout and mounted Nginx
+configuration against that commit. Its checks are read-only; browser, email,
+persistence and public HTTPS acceptance remain required before the old
+LimeSurvey installation is retired. The earlier cross-host restore adapter is
+retired for this decision. Operational instructions stay in protected local
+documentation.
 
 ## 2026-10-22 companion CI remediation slice
 

@@ -172,7 +172,9 @@ class MaintenanceTests(unittest.TestCase):
         self.assertEqual(result['status'], 'NGINX_MAINTENANCE_PREFLIGHT_PASS')
         self.assertEqual(result['production'], 'HOLD')
         self.assertEqual(component.call_args.args[1:3], ('nginx', fixtures.SHA))
-        self.assertTrue(any(c[1] == 'exec' and c[3] == 'wget' for c in self.calls))
+        self.assertTrue(any(c[1] == 'exec' and c[3] == 'wget' and
+                            c[-1] == 'http://127.0.0.1/index.php?r=admin/authentication/sa/login'
+                            for c in self.calls))
         self.assertFalse(any(c[1] in ('run', 'create', 'stop', 'rm', 'compose') for c in self.calls))
 
     def test_bad_external_manifest_hash(self):

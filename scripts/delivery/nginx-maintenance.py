@@ -288,7 +288,7 @@ def canary(expected, current, component, config):
     require(production_config == candidate_config and digest(candidate_config) == bound['nginx_config_sha256']
             and b'fastcgi_pass app:9000;' in candidate_config)
     body = command(['docker', 'exec', candidate['Id'], 'wget', '-qO-', '-T', '30',
-                    'http://127.0.0.1/index.php/admin/authentication/sa/login'])
+                    'http://127.0.0.1/index.php?r=admin/authentication/sa/login'])
     require(len(body) <= 2_000_000 and all(marker in body.lower() for marker in
                                          (b'<form', b'limesurvey', b'password')))
     # Record only a body hash; login page sessions/CSRF tokens never leave the process.

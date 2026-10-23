@@ -812,3 +812,51 @@ security-ineligible and prohibited after potential public writes. Source tests
 prove these guards offline. Target backups, restore/browser evidence, measured
 recovery duration, production HTTPS and approved mail delivery remain separate
 runtime acceptance gates; no source-phase runtime PASS is asserted.
+
+## 2026-10-22 OCI Nginx component maintenance admission
+
+Source-only four-file slice: this plan, `scripts/delivery/nginx-maintenance.py`,
+`tests/test_nginx_maintenance_gate.py`, and `docs/delivery/nginx-maintenance.md`.
+The read-only preflight independently admits a signed Nginx component without
+relaxing the existing same-source bundle gate. An externally hash-pinned private
+manifest binds the old/new rendered Compose documents, exact current containers,
+configuration files, proxy, volumes and networks. Only `services.nginx.image`
+may differ. An already-created isolated candidate must use production read-only
+mounts and the actual application network/FPM; config equality and a private
+FastCGI login probe are checked live. Repeat the bound observations after probes.
+No canary creation, environment editing, recreation or deployment is implemented.
+Preflight PASS remains production HOLD until an operator performs the documented
+single-service change and post-change/rollback acceptance. Test substitutions,
+configuration drift, unhealthy/recreated services, stale evidence and a canary
+with the wrong FPM/network/mounts. Run all gate tests once before source review.
+
+Initial source verification: 15 targeted maintenance tests and all 210
+`test_*gate.py` tests passed; both new Python files compiled and
+`git diff --check` passed. Docker/Cosign transport is synthetic in these tests;
+the component evidence/security validators execute unchanged. Live OCI canary,
+preflight, replacement and post-change acceptance remain unverified.
+
+Independent review remediation binds freshly computed Compose service hashes to
+live labels, explicitly maps rendered Nginx settings to Docker runtime, rejects
+unsupported settings and unsafe/unbounded canary isolation/resources, and
+rechecks final canary health. A mandatory independent archive bootstrap selects
+a clean reviewed gate commit before repository Python executes; the CLI verifies
+that separate gate identity before local validator imports. Candidate image
+source cannot choose the validator code. The four-file scope is unchanged.
+
+Review remediation verification: all 26 targeted maintenance tests and all 221
+`test_*gate.py` tests passed; Python compilation and diff whitespace checks passed.
+Tests now reject the reproduced rebound-Compose command/public-port bypass,
+each service config-hash mismatch, live settings drift, unsafe canary namespaces,
+unconfined security, unlimited resources, late canary health failure and source
+identity failures before validator import. No live OCI mutation occurred.
+
+Residual resource-default review remediation rejects Docker controls omitted by
+Compose, including PidsLimit/MemorySwappiness overrides, extra CPU and block I/O
+limits, device/cgroup controls, ulimits and OOM adjustments. Adversarial checks
+rebind the inspected fingerprint and still reject each override on both the
+production Nginx and canary. The four-file scope remains unchanged.
+
+Residual remediation verification: all 27 targeted maintenance tests passed and
+`git diff --check` passed. The runbook now distinguishes 120-second Docker/Git
+probe timeouts, 180-second Cosign transport and the 300-second total gate bound.

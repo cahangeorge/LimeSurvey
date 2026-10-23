@@ -153,7 +153,7 @@ config/manifest ID representation to vary while the existing component validator
 independently checks the signed registry manifest's config digest. Only the live
 app ID may own the `app` alias on the application network. The entire output of
 `nginx -T` must equal production, and its hash must match the private manifest.
-A private GET through the canary to the LimeSurvey admin login must succeed and
+A private GET through the canary to `index.php?r=admin/authentication/sa/login` must succeed and
 contain the login form. A static health endpoint alone cannot pass. Only the
 response hash is emitted; the body and transient CSRF/session values are discarded.
 

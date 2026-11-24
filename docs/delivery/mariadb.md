@@ -8,8 +8,8 @@ part of this artifact gate.
 
 The immutable parent is
 `docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39`.
-The builder is Go 1.27.2 Alpine 3.24, index digest
-`sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d`.
+The builder is Go 1.27.3 Alpine 3.24, index digest
+`sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4`.
 Unchanged gosu 1.19 source is `6456aaa0f3c854d199d0f037f068eb97515b7513`;
 its archive SHA-256 is `33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b`.
 The Dockerfile pins module versions/checksums, uses local toolchain, static ARM64,
@@ -18,7 +18,7 @@ Go omits linker flags from build metadata when `-trimpath` is set; the ELF
 symbol table must remain present to reject `-s`, while the reviewed Dockerfile
 binds the exact linker flags. The main module is `(devel)` because the source comes from an archive.
 Compiler, exact dependency identities, binary hash, source pin and gosu version
-remain mandatory. The Go 1.26 module directive compiled by Go 1.27.2 also
+remain mandatory. The Go 1.26 module directive compiled by Go 1.27.3 also
 requires the exact build setting
 `DefaultGODEBUG=tracebacklabels=0,x509sslcertoverrideplatform=0`; omitted, changed
 or arbitrary compatibility defaults fail. Stripping with `-s` is forbidden.
@@ -89,3 +89,21 @@ git diff --check
 
 Native builds, gosu/database regression and fresh scans remain UNKNOWN until
 protected GitHub CI runs against the reviewed source.
+
+## 2026-10-22 compiler security maintenance
+
+The Go 1.27.2 compiler/stdlib pin is superseded by official Go 1.27.3 to
+resolve the blocking stdlib finding reported by CI run 39776804915
+(`CVE-2026-111943`, fixed version 1.27.3). The
+[official Go release history](https://go.dev/doc/devel/release#go1.27.3)
+records security fixes in crypto/x509, and the
+[official image metadata](https://github.com/docker-library/repo-info/blob/master/repos/golang/remote/1.27.3-alpine3.24.md)
+binds the new multi-architecture builder index. Gosu source/archive and module
+versions/checksums are unchanged. Admission requires `go1.27.3` and stdlib
+`v1.27.3`; previous compiler evidence and previous stdlib scan inventory fail.
+
+Local AMD64 builder execution produced a static ARM64 gosu binary with exact
+compiler/module/build settings, including the existing compatibility defaults.
+This is build evidence, not native privilege-drop/database runtime acceptance.
+See [maintenance evidence](maintenance-20261022.md). Native ARM64 regression,
+fresh exact-image CVE/SBOM scans and signed release admission must rerun.

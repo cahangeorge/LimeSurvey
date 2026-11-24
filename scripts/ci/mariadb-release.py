@@ -21,7 +21,7 @@ require = shared.require
 IMAGE = 'ghcr.io/cahangeorge/limesurvey-mariadb'
 BASE = 'docker.io/library/mariadb@sha256:0130d92c05fbf2d82adc2b86de742eaede65b2596c65d91786f8e03cd19e6a39'
 BASE_ALIASES = frozenset((BASE, 'mariadb@' + BASE.split('@')[1]))
-BUILDER = 'golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d'
+BUILDER = 'golang:1.27.3-alpine3.24@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4'
 GOSU_SHA = '6456aaa0f3c854d199d0f037f068eb97515b7513'
 ARCHIVE = '33d7537d588ea49458b9509bcf4554bdf5ceacc66da71e5caa1058ea3b689c3b'
 MODULES = {'github.com/moby/sys/user': ['v0.4.1', 'h1:RgjRlaDKi/Xmyrz4t8lyzXT6v2ooFeO/7xtchmhVWE0='],
@@ -31,7 +31,7 @@ SETTINGS = {'-buildmode': 'exe', '-compiler': 'gc', '-trimpath': 'true', 'CGO_EN
             'DefaultGODEBUG': 'tracebacklabels=0,x509sslcertoverrideplatform=0'}
 GOSU_MODULE = 'github.com/tianon/gosu'
 GOSU_PURL = 'pkg:golang/' + GOSU_MODULE
-GO_PACKAGES = {(name, value[0]) for name, value in MODULES.items()} | {('stdlib', 'v1.27.2')}
+GO_PACKAGES = {(name, value[0]) for name, value in MODULES.items()} | {('stdlib', 'v1.27.3')}
 REGRESSION_CHECKS = ('mysql', 'numeric', 'groups', 'home', 'exec', 'failure', 'fresh_init', 'nonroot_restart', 'persistence')
 
 
@@ -58,7 +58,7 @@ def identity(value):
 
 def validate_build(build):
     require(build.get('source') == GOSU_SHA and build.get('archive_sha256') == ARCHIVE
-            and build.get('compiler') == 'go1.27.2' and build.get('modules') == MODULES
+            and build.get('compiler') == 'go1.27.3' and build.get('modules') == MODULES
             and build.get('settings') == SETTINGS and build.get('path') == 'github.com/tianon/gosu'
             and build.get('main') in ('(devel)', 'v1.19') and build.get('version') == '1.19'
             and build.get('static_arm64') is True

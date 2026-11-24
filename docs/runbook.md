@@ -195,16 +195,18 @@ provider acceptance and actual mailbox delivery are independently recorded.
 ## 8. Upgrade
 
 1. Review the LimeSurvey release notes and database migration requirements.
-2. Update the upstream tag, commit, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
+2. Update the upstream distribution version/source type, archive SHA-256, base-image versions/digests, and the versioned code/config/plugins/themes/runtime volume names in one reviewed change.
 3. Run the full local gate, dependency/secret review, and native ARM64 build.
 4. Produce and restore-test a fresh production backup.
 5. Deploy in a maintenance window, verify database migrations, browser behavior, plugin availability, persistence, and a Resend test delivery.
 6. Retain the previous Git revision, image, database dump, and application-volume archive until the rollback window closes.
 
-For the current `7.5.0+261001` candidate, the source archive checksum is
-`88a5501ecd61c3710a8902ce8eb0894d38b64e80c0caaffae496038ab226a493` and the
-required schema is 717. Fresh `app-code-v7-5-0`, `app-config-v7-5-0`,
-`app-plugins-v7-5-0`, `app-themes-v7-5-0` and `app-runtime-v7-5-0` volumes are
+For the current `7.7.0+261020` candidate, the official ZIP checksum is
+`925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`. The admitted ZIP declares schema 717,
+as did the previous 7.5.0 deployment. Rehearse against a restored copy before
+production; the existing historical controller only supports the 712-to-717
+path and must not be used to migrate an existing schema-717 source to OCI. Fresh `app-code-v7-7-0`, `app-config-v7-7-0`,
+`app-plugins-v7-7-0`, `app-themes-v7-7-0` and `app-runtime-v7-7-0` volumes are
 necessary: populated mounts hide new application files, including upstream
 plugins/themes, `version.php`, configuration defaults and compiled runtime caches.
 Operational volumes containing upstream files must identify the accepted app
@@ -270,3 +272,126 @@ For a schema, data, or volume failure:
 4. Verify checksums and acceptance behavior, then switch the route.
 
 Formbricks remains the service-level rollback path until LimeSurvey acceptance, survey recreation, dependent-site updates, and cutover all pass. Keep all Formbricks resources and backups for at least seven days after cutover. Permanent deletion requires a new explicit approval.
+
+## OCI cross-host schema 717 transfer (2026-10-22)
+
+`scripts/delivery/crosshost.py` is a local Docker-host adapter. It does not use
+SSH, start services, run `updatedb`, publish routes, resume source writers, or
+remove source data. The historical `operate.py` 712-to-717 recovery command must
+not be used for this transfer. There is no automatic reset or retry after a
+partial restore: preserve the failed target and provision a new isolated target
+with a new reviewed plan.
+
+The reviewed target Compose source is `deploy/staging.compose.yaml`, using its
+admitted immutable PHP/Nginx/MariaDB triple and `DELIVERY_*` external volume and
+network selections. Render with `docker compose --project-directory <checkout>
+--project-name <unique-oci-project> -f deploy/staging.compose.yaml config --quiet`
+using an operator-owned private environment. Keep `RESEND_API_KEY` empty for the
+rehearsal. Database and PHP publish no host ports; Nginx binds only
+`127.0.0.1:$DELIVERY_PORT:80`. Use new OCI volume/network names disjoint from the
+source. Target bridge networks must contain only the three exact target
+containers, with no Coolify/proxy containers or public routing labels. The
+adapter verifies those constraints before import. A live rendered configuration,
+volume image-seeding check, admitted artifact identity and host isolation proof
+remain gates; a static Compose render does not prove them.
+
+Prepare target DB initialization only, with empty application tables, and seed
+application volumes from the admitted image. Keep target app and nginx stopped
+before restore; DB stays running. Do not run the installer. Supply the existing
+DB connection identity through the approved secret path so the preserved
+`config.php` remains usable; the adapter never reads/prints database passwords.
+Both source encryption keys in `security.php` and the complete `config.php` are
+restored byte-identically. Custom plugin/theme directories must be explicitly
+allowlisted; the old application code and bundled defaults are not overlaid.
+
+Before writer fencing, disable autodeploy on both source and target and verify
+there is no queued deployment, scheduled restart or external supervisor action
+that could restart app/nginx. Both Compose runtimes use `restart: unless-stopped`;
+the Docker stop fence alone does not exclude an operator or deployment controller
+starting them again. Retain that deployment freeze through publication. Re-inspect
+the exact stopped source app/nginx IDs and private DB topology immediately before
+cutover; if the fence has drifted, capture a fresh matched backup and repeat the
+private restore proof before publication.
+
+Before writer fencing, review a private JSON plan (mode `0600`) on each host.
+Its absolute `directory` must have mode `0700`, belong to the invoking operator,
+and resolve without symbolic links. Use the same absolute directory and plan
+bytes on both hosts; the plan contains no secrets. Required shape:
+
+```text
+version: 1; schema: 717; transaction: unique lowercase alphanumeric (16–48 chars)
+prefix: verified SQL table prefix
+directory: absolute protected directory
+hosts: {source: sha256(/etc/machine-id bytes), target: distinct host hash}
+custom_plugins: explicit directory names; custom_themes: explicit directory names
+source and target, each:
+  nginx_config: {path: absolute local bind file, sha256: exact file hash}
+  volumes: {db, code, config, upload, plugins, themes, runtime: exact Docker names}
+  containers: {app, nginx, db}, each:
+    id: exact 64-character container ID
+    image: exact repository@sha256:digest
+    image_id: exact sha256 image configuration ID
+    networks: exact Docker bridge network names
+```
+
+The plan is reviewed and SHA-256 pinned externally before execution; the CLI
+requires that exact hash. `validate-plan` checks only the plan structure and
+protected paths; `validate` performs a real read-only runtime preflight on the
+matching source/target host. Source preflight requires the running source
+app/nginx, its reviewed private DB network, table prefix and schema 717; target
+preflight requires stopped app/nginx and an empty DB. A different host fails
+before Docker access. Inspect operations and backup receipts contain private
+aggregate inventories and must stay outside Git. Run these local commands in
+sequence, substituting only the reviewed plan path/hash:
+
+```bash
+python3 scripts/delivery/crosshost.py validate --plan /private/plan.json --plan-sha256 <reviewed-sha256>
+# On OmneStack: verifies source schema/identity, stops exact nginx and app,
+# rechecks writer fence, and uses mariadb-dump --lock-all-tables for MyISAM.
+python3 scripts/delivery/crosshost.py backup --plan /private/plan.json --plan-sha256 <reviewed-sha256>
+# Copy the matched database.sql, files.tar.gz, backup.json and identical plan
+# through the approved encrypted transfer path into OCI's protected directory.
+# Also retain an independently protected off-server copy and verify its hashes.
+python3 scripts/delivery/crosshost.py verify-pair --plan /private/plan.json --plan-sha256 <reviewed-sha256>
+# On OCI, with app/nginx stopped and only its empty DB running:
+python3 scripts/delivery/crosshost.py restore --plan /private/plan.json --plan-sha256 <reviewed-sha256>
+```
+
+`backup.json` binds the plan, transaction, source host, SQL/archive hashes,
+selected file hashes and schema/table/row/permission inventory in one receipt.
+Receipt creation follows the fenced capture; transfer corruption and mixed
+pairs fail before target import. Success leaves source stopped and target
+app/nginx stopped. Repeating completed backup rechecks the fence/pair; repeating
+completed restore rechecks the DB inventory and every restored file hash without
+reimporting. A partial operation fails closed and retains diagnostic state.
+
+`PRIVATE_RESTORE_VERIFIED` proves a stopped target restore, not application or
+publication readiness. Next verify private HTTP/admin login, existing surveys,
+synthetic response/export, restart persistence, PHP 8.3.36, schema 717, encryption
+and Resend delivery with the approved sender. Recheck source fence and backup
+retention before controlled canonical publication. Record the publication time
+and first possible OCI write: after OCI accepts writes, restarting the stale
+OmneStack DB is forbidden as a rollback. Recovery requires a fresh OCI paired
+backup and a separately reviewed data-preserving plan. Remove OmneStack resources
+only after successful live acceptance and the user's retention/deletion decision.
+
+Offline adapter evidence (2026-10-22):
+- `python3 -m unittest discover -s tests -p test_crosshost_delivery_gate.py`:
+  13 tests PASS, including successful paired capture and repeat restore without
+  reimport, plus schema/identity/path/permission/mixed-pair/port/network fences.
+- `python3 -m unittest discover -s tests -p 'test_*gate.py'`: 194 tests PASS
+  (181 existing gate tests plus 13 cross-host tests).
+- `python3 -m py_compile scripts/delivery/crosshost.py tests/test_crosshost_delivery_gate.py`
+  and `git diff --check`: PASS.
+- Local `docker compose ... config --quiet` is unavailable: this workstation's
+  Docker command invokes Podman Compose 1.6.0, which rejects `--project-directory`.
+  Exact Docker Compose rendering on OCI remains an independent live gate.
+No production capture, transfer, import, deployment or publication was performed
+by this source implementation slice.
+
+Independent review repairs (2026-10-22): source DB publication/internal bridge
+membership are now verified before and after fencing/capture; `validate` invokes
+runtime/schema preflight and `validate-plan` names the structural-only operation.
+Focused tests reject new source ports, runtime port-map drift, publish-all,
+non-internal DB networking, extra clients before/after fence, wrong hosts,
+wrong schemas and runtime drift. No production operations were executed.

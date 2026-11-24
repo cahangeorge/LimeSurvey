@@ -13,8 +13,9 @@ from pathlib import Path
 REPOSITORY = "cahangeorge/LimeSurvey"
 SOURCE = "https://github.com/" + REPOSITORY
 IMAGE = "ghcr.io/cahangeorge/limesurvey"
-UPSTREAM = "c5a2ac817396220e054efc3fd26b84cafb92b36f"
-VERSION = "7.5.0+261001"
+UPSTREAM = {"type": "release-zip", "sha256": "925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d"}
+PHP_VERSION = "8.3.36"
+VERSION = "7.7.0+261020"
 PLUGIN_TARGET = "var/www/html/application/core/plugins/TwoFactorAdminLogin/vendor/composer/installed.json"
 ROOT_TARGET = "var/www/html/vendor/composer/installed.json"
 MANIFEST_TYPES = ("application/vnd.oci.image.manifest.v1+json",
@@ -128,7 +129,8 @@ def validate_image(raw, digest, inspected, report, inventory, db, sbom, sha, now
     labels = image["Config"]["Labels"]
     require(labels.get("org.opencontainers.image.source") == SOURCE
             and labels.get("org.opencontainers.image.revision") == sha
-            and labels.get("io.omnestack.limesurvey.upstream-revision") == UPSTREAM
+            and labels.get("io.omnestack.limesurvey.upstream-source-type") == UPSTREAM["type"]
+            and labels.get("io.omnestack.limesurvey.upstream-sha256") == UPSTREAM["sha256"]
             and labels.get("org.opencontainers.image.version") == VERSION, "image source/version mismatch")
     require(report.get("SchemaVersion") == 2 and report.get("ArtifactName") == ref
             and report.get("ArtifactType") == "container_image"
@@ -137,6 +139,7 @@ def validate_image(raw, digest, inspected, report, inventory, db, sbom, sha, now
     require(metadata.get("ImageID") == image_id and ref in metadata.get("RepoDigests", []), "scanned image mismatch")
     require(metadata.get("ImageConfig", {}).get("architecture") == "arm64"
             and metadata.get("ImageConfig", {}).get("os") == "linux", "scanned platform mismatch")
+    require(inventory.get("php_version") == PHP_VERSION, "wrong PHP security release")
     family, version = inventory.get("os_family"), inventory.get("os_version")
     supported_os(family, version)
     scanned_os = metadata.get("OS", {})
@@ -281,7 +284,7 @@ def main():
                       "source_commit": args.sha, "config_commit": args.sha,
                       "image": IMAGE + "@" + args.digest, "digest": args.digest,
                       "image_config_digest": inspected[0]["Id"], "platform": "linux/arm64",
-                      "upstream": {"version": VERSION, "commit": UPSTREAM},
+                      "upstream": {"version": VERSION, "source": UPSTREAM},
                       "ci": ci, "release_run": {"id": args.run_id, "attempt": args.attempt,
                       "url": f"{SOURCE}/actions/runs/{args.run_id}"},
                       "scan": {"status": "PASS", "tool": "Trivy 0.75.0", **counts},

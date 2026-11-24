@@ -8,10 +8,79 @@ Build a pinned, ARM64-compatible LimeSurvey Community Edition deployment in a pu
 
 The implementation is intentionally split into bounded phases. The first implementation session targets only repository foundation and local verification. Production backup, deployment, cutover, and eventual deletion remain separate gates.
 
+## 2026-10-22 maintenance slice (authorized)
+
+Update the official CE distribution to `7.7.0+261020`, SHA-256
+`925dd275e301b3a12fd18e14994bd21cbee34a08202bc618278c3c1cfc16988d`,
+and both PHP stages to `8.3.36-fpm-alpine3.24` pinned by multi-platform index
+`sha256:81cb692948e6de4275f7e107c50a34e963a440660f2c5b8502d11071f7d30338`.
+OCI is the target and OmneStack is the migration source; restore rehearsal and cutover remain pending. This ZIP release has no asserted Git commit. Admission binds the distribution
+hash and type through labels, release receipts, bundle admission and operational
+guards. Previous Git-source receipts cannot admit the new distribution.
+
+The reviewed scope exceeds five files: Dockerfile, Compose image/volume versions,
+CI admission/controller scripts and regression tests, AGENTS/README/spec/current
+runbook and staging/security documentation, plus this plan and a maintenance
+evidence record. No plugin behavior, credentials, deployment or production data
+changes are included. Archive SHA-256 is checked before extraction. Run offline
+gates, functional smoke self-test, Compose/shell/PHP checks and a native ARM64
+build/runtime test where the environment permits; record unavailable gates.
+
+## 2026-10-22 fresh OCI installation override (authorized)
+
+The user's latest decision explicitly discards all existing OmneStack LimeSurvey
+data and requests a new OCI installation without backup/restore. For this path,
+LimeSurvey source backup/restore gates above and below are superseded; Formbricks
+requirements remain unchanged. Do not use `crosshost.py` or import old data.
+
+This bounded slice touches exactly five files: `deploy/compose.oci-fresh.yaml`,
+`scripts/delivery/fresh.py`, `tests/test_fresh_delivery_gate.py`,
+`docs/delivery/oci-fresh.md`, and this plan. Require a new namespace and seven
+absent target volumes, exact three-image signed admission through the existing
+evaluator, private database, Nginx-only proxy attachment and PHP outbound access
+for Resend. Keep the installer private until initialization and runtime acceptance.
+The helper is read-only; this slice does not deploy, create credentials, change
+DNS, delete services or touch Formbricks. Validate adversarial topology/admission
+and collision cases offline, then render on OCI before deployment. Target admin,
+synthetic public survey/export, restart persistence, final Resend delivery and
+public HTTPS remain live acceptance gates before source retirement.
+
+## 2026-10-22 cross-host adapter slice (authorized)
+
+The sole writer adds `scripts/delivery/crosshost.py` and
+`tests/test_crosshost_delivery_gate.py`, and updates this plan and
+`docs/runbook.md` (four files). The adapter is local to each Docker host: exact
+container/image/mount/network identities, schema 717 only, fenced MyISAM paired
+backup, protected hash-bound transfer receipt, and restore into an empty private
+OCI target. It does not invoke the historical 712-to-717 controller, run
+`updatedb`, resume source writers, deploy, transfer credentials, or publish.
+Source DB publication and extra DB-network clients are rejected before/after
+fencing; its sole DB network must be an internal app+DB-only bridge. The
+`validate` operation performs matching-host runtime/schema preflight;
+`validate-plan` explicitly checks structure only. Existing staging Compose supplies the private target topology. Live artifact
+admission, restore/browser proof, off-host retention, cutover and retirement
+remain separate operator gates.
+
+## 2026-10-22 companion CI remediation slice
+
+CI run 39776804915 established the application ARM64 build, Compose smoke and
+functional roundtrip, but blocked MariaDB on gosu's Go 1.27.2 stdlib CVE and
+Nginx on an unavailable libexpat pin. This authorized source-only slice updates
+Go to official 1.27.3 with immutable image index and compiler/stdlib evidence,
+and libexpat to the exact 2.9.0-r0 available in official Alpine 3.24 indexes for
+both aarch64 and x86_64. Preserve gosu source/dependency hashes and all severity,
+coverage, signing and runtime gates; no exception or production action.
+
+The bounded scope exceeds five files: MariaDB and Nginx Dockerfiles, their CI
+gates and regression fixtures, release-gate workflow package assertion,
+companion/MariaDB documentation, this plan and maintenance evidence. Validate
+package availability, run the offline suite and targeted local builds/probes.
+Native ARM64 regression/security/signing acceptance must rerun in CI.
+
 ## Architecture decisions
 
 1. **Parallel replacement, not in-place mutation.** LimeSurvey receives a separate Coolify application, database, volumes, and `survey.omnestack.com` hostname. Formbricks remains untouched until acceptance checks pass.
-2. **Immutable upstream source.** The current maintenance candidate is pinned to LimeSurvey tag `7.5.0+261001` and commit `c5a2ac817396220e054efc3fd26b84cafb92b36f`; moving branches and `latest` image tags are forbidden. The original 7.1.1 checkpoint below remains historical evidence.
+2. **Immutable upstream source.** The current maintenance candidate is pinned to the official LimeSurvey CE ZIP `7.7.0+261020` and its published SHA-256; moving branches and `latest` image tags are forbidden. The original 7.1.1 checkpoint below remains historical evidence.
 3. **Deployment wrapper repository.** `cahangeorge/LimeSurvey` owns only deployment files, the Resend plugin, tests, and runbooks. It does not rewrite vendored upstream application code unless a verified blocker makes a minimal patch unavoidable.
 4. **Three-service runtime.** Nginx serves/proxies the application, PHP 8.3 FPM runs LimeSurvey, and MariaDB 11.4 LTS stores application data. Persistent named volumes cover database data and LimeSurvey writable/custom paths.
 5. **HTTPS email transport.** A focused LimeSurvey email plugin handles `beforeEmailDispatch`, sends through Resend's HTTPS API, uses finite timeouts, and never logs credentials or authorization headers.

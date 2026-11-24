@@ -1,5 +1,7 @@
 # Active Plan: adopt PHP Alpine base for the MVP
 
+Current maintenance policy (2026-10-22) supersedes the historical version pins below: CE 7.7.0+261020 official release ZIP and PHP 8.3.36. See [maintenance evidence](docs/delivery/maintenance-20261022.md). Earlier acceptance applies only to its recorded artifacts.
+
 ## Project and phase
 LimeSurvey CI/CD MVP, bounded local base adoption, 2026-10-04. Root Codex sole writer; independent native review read-only.
 User explicitly requested execution of the recommendation: Alpine3.24/PHP8.3 with Resend; Kerberos/GSSAPI is outside this MVP requirement. Prior canary and APK adapter are checkpointed privately. Main base a904e62; preserve original dirty checkout.

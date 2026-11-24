@@ -1,5 +1,5 @@
 # Only gosu is replaced; the official MariaDB runtime contract is inherited.
-FROM golang:1.27.2-alpine3.24@sha256:f92b6ef800e499660581efdabdf25d9d817a9d124eaf900924f0504e7e27e12d AS gosu
+FROM golang:1.27.3-alpine3.24@sha256:d530cf60723abf1ffae0cd16bb546b379ec0550d2f3815e5b16ed69dbc00fba4 AS gosu
 ENV GOTOOLCHAIN=local CGO_ENABLED=0 GOOS=linux GOARCH=arm64
 WORKDIR /src
 RUN wget -q -O /tmp/gosu.tar.gz https://codeload.github.com/tianon/gosu/tar.gz/6456aaa0f3c854d199d0f037f068eb97515b7513 \

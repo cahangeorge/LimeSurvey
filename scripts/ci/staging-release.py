@@ -80,7 +80,7 @@ def validate_artifact(root, kind, expected, sha, now):
     raw = (root / 'registry-manifest.json').read_bytes()
     if kind == 'php':
         require(release.get('config_commit') == sha
-                and release.get('upstream') == {'version': shared.VERSION, 'commit': shared.UPSTREAM},
+                and release.get('upstream') == {'version': shared.VERSION, 'source': shared.UPSTREAM},
                 'wrong application build source/upstream policy')
         shared.validate_image(raw, ctx['digest'], load('image.json'), load('scan.json'),
                               load('inventory.json'), load('db.json'), load('sbom.cdx.json'), sha, now)
@@ -147,7 +147,7 @@ def component(expected, kind, sha, now):
 
 def evaluate(expected_bundle_path, expected_bundle_sha256, now):
     bundle = checked(expected_bundle_path, expected_bundle_sha256)
-    require(bundle.get('schema_version') == 1 and bundle.get('upstream_commit') == shared.UPSTREAM,
+    require(bundle.get('schema_version') == 1 and bundle.get('upstream_source') == shared.UPSTREAM,
             'wrong bundle/security policy')
     sha = bundle['source_commit']
     require(isinstance(sha, str) and re.fullmatch(r'[0-9a-f]{40}', sha), 'invalid artifact build source')
@@ -155,7 +155,7 @@ def evaluate(expected_bundle_path, expected_bundle_sha256, now):
             'expected exactly PHP/Nginx/MariaDB')
     admitted = {kind: component(bundle['components'][kind], kind, sha, now) for kind in sorted(COMPONENTS)}
     return {'schema_version': 1, 'status': 'ARTIFACT_BUNDLE_ADMITTED', 'checked_at': now.isoformat(),
-            'expected_bundle_sha256': expected_bundle_sha256, 'source_commit': sha, 'upstream_commit': shared.UPSTREAM,
+            'expected_bundle_sha256': expected_bundle_sha256, 'source_commit': sha, 'upstream_source': shared.UPSTREAM,
             'components': admitted, 'staging_deployable': False, 'production': 'HOLD',
             'pending': ['Selected-triple runtime and configuration acceptance',
                         'Paired backup/isolated restore, migration, promotion and rollback acceptance']}

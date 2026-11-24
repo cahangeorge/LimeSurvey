@@ -29,11 +29,12 @@ class ReleaseGateTests(unittest.TestCase):
         self.ref = gate.IMAGE + "@" + self.digest
         labels = {"org.opencontainers.image.source": gate.SOURCE,
                   "org.opencontainers.image.revision": self.sha,
-                  "io.omnestack.limesurvey.upstream-revision": gate.UPSTREAM,
+                  "io.omnestack.limesurvey.upstream-source-type": gate.UPSTREAM["type"],
+                  "io.omnestack.limesurvey.upstream-sha256": gate.UPSTREAM["sha256"],
                   "org.opencontainers.image.version": gate.VERSION}
         self.inspect = [{"Id": self.config, "Os": "linux", "Architecture": "arm64",
                          "RepoDigests": [self.ref], "Config": {"Labels": labels}}]
-        self.inventory = {"os_family": "debian", "os_version": "12",
+        self.inventory = {"php_version": gate.PHP_VERSION, "os_family": "debian", "os_version": "12",
                           "os": [["libc6", "1:2.36-9"]], "composer": {
             "var/www/html/vendor/composer/installed.json": [["vendor/runtime", "v1.2.3"]],
             gate.PLUGIN_TARGET: [["robthree/twofactorauth", "1.6.5"]]}}
@@ -96,6 +97,27 @@ class ReleaseGateTests(unittest.TestCase):
                 mutate()
                 with self.assertRaises(gate.GateError):
                     self.check()
+
+    def test_distribution_source_and_php_security_release_are_bound(self):
+        for value in ("8.3.33", "8.3.35", "8.4.23", None):
+            with self.subTest(php=value):
+                self.setUp()
+                self.inventory["php_version"] = value
+                with self.assertRaises(gate.GateError):
+                    self.check()
+        for field, value in (("io.omnestack.limesurvey.upstream-source-type", "git"),
+                             ("io.omnestack.limesurvey.upstream-sha256", "0" * 64)):
+            with self.subTest(label=field):
+                self.setUp()
+                self.inspect[0]["Config"]["Labels"][field] = value
+                with self.assertRaises(gate.GateError):
+                    self.check()
+        self.setUp()
+        labels = self.inspect[0]["Config"]["Labels"]
+        del labels["io.omnestack.limesurvey.upstream-sha256"]
+        labels["io.omnestack.limesurvey.upstream-revision"] = "c5a2ac817396220e054efc3fd26b84cafb92b36f"
+        with self.assertRaises(gate.GateError):
+            self.check()
 
     def test_multi_platform_index_is_not_the_tested_single_manifest(self):
         self.raw = json.dumps({"schemaVersion": 2, "manifests": []}).encode()
@@ -295,7 +317,7 @@ class InstalledInventoryTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--entrypoint") + 2], image)
                 if command[-1] == "/etc/os-release": return f'ID={family}\nVERSION_ID="{version}"\n'
                 if command[-1] == "/lib/apk/db/installed" or "dpkg-query" in command: return database
-                if command[-1] == "echo PHP_VERSION;": return "8.3.35"
+                if command[-1] == "echo PHP_VERSION;": return gate.PHP_VERSION
                 return json.dumps({gate.ROOT_TARGET: [["vendor/runtime", "1.2.3"]]})
             with self.subTest(family=family), patch.object(gate.subprocess, "check_output", side_effect=read):
                 result = gate.extract_inventory(image)

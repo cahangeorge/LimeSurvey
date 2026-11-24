@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+    <metadata>
+        <name>georgianadaycare</name>
+        <title>Georgiana Daycare</title>
+        <type>theme</type>
+        <author>Georgiana Daycare</author>
+        <license>GNU General Public License version 2 or later</license>
+        <version>1.0.0</version>
+        <apiVersion>3</apiVersion>
+        <description>Georgiana Daycare public survey theme.</description>
+        <extends>fruity</extends>
+    </metadata>
+    <compatibility>
+        <version>7.0</version>
+    </compatibility>
+    <files>
+        <css>
+            <add>css/georgianadaycare.css</add>
+        </css>
+        <js>
+            <add>scripts/embed.js</add>
+        </js>
+    </files>
+</config>

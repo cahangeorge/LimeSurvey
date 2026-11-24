@@ -29,6 +29,9 @@ The replacement must:
 - MariaDB 11.4 LTS, pinned to an explicit image tag.
 - Docker Compose deployed by Coolify on the existing ARM64 server.
 - Persistent named volumes for database, LimeSurvey upload files, plugins, themes/customizations, and writable runtime configuration.
+- LimeSurvey remains the survey engine. The public GeorgianDaycare survey is embedded cross-origin by a separate Svelte component; LimeSurvey owns the iframe interior and the Svelte component owns only its outer shell.
+- The managed `georgianadaycare` survey theme extends the pinned built-in Fruity theme. It owns GeorgianDaycare design tokens, iframe-interior visuals, accessibility states, and responsive layout.
+- The theme may send only `postMessage` events `{type: "georgianadaycare:ready"}`, `{type: "georgianadaycare:resize", height}`, and `{type: "georgianadaycare:completion"}`; it sends no response data. Before loading the iframe, the future Svelte component sets its `name` to `georgianadaycare:parent-origin:<exact parent origin>`; the theme validates and normalizes that origin, with a cross-origin `document.referrer` fallback when the name contract is absent. Parent CSS cannot style the cross-origin iframe. The Svelte component owns the outer shell, lazy loading, loading/error states, and focus management, and validates message origin, source, and payload shape; it does not duplicate iframe styling or survey behavior.
 - Custom LimeSurvey email plugin using the Resend `POST /emails` HTTPS API and `RESEND_API_KEY` from runtime environment; no secret stored in Git or logged.
 
 ## Commands
@@ -72,6 +75,8 @@ docker/
   entrypoint.sh             idempotent initialization and permissions
 plugins/
   ResendEmail/              LimeSurvey email plugin for HTTPS delivery
+themes/
+  georgianadaycare/         Managed theme extending pinned built-in Fruity
 tests/
   ResendEmailPluginTest.php focused no-network plugin tests
 ```
@@ -93,9 +98,10 @@ PHP plugin code follows PSR-12, validates external API responses, uses finite co
 2. **Unit:** Resend payload, success, timeout/non-2xx failure, missing key, and secret non-disclosure.
 3. **Build:** Native ARM64 production image build using the pinned LimeSurvey tag.
 4. **Integration:** installer/database initialization, admin login, public survey submission, uploads, and email delivery.
-5. **Persistence:** restart/redeploy and prove the created survey/response remains.
-6. **Migration:** inventory Formbricks survey/response counts; export data; verify backup can be listed/restored before cutover.
-7. **Cutover:** HTTPS/DNS/browser checks on the new domain, then redirect/compatibility check for the old domain.
+5. **Theme/embed:** static theme-package checks, idempotent wrapper-image sync, runtime rendering/accessibility/responsive checks, and validated `ready`/`resize`/`completion` messages before any production deployment.
+6. **Persistence:** restart/redeploy and prove the created survey/response remains.
+7. **Migration:** inventory Formbricks survey/response counts; export data; verify backup can be listed/restored before cutover.
+8. **Cutover:** HTTPS/DNS/browser checks on the new domain, then redirect/compatibility check for the old domain.
 
 ## Boundaries
 ### Always
@@ -104,6 +110,7 @@ PHP plugin code follows PSR-12, validates external API responses, uses finite co
 - Pin images, upstream tag/commit, and database major version.
 - Keep Formbricks available until LimeSurvey acceptance criteria pass.
 - Verify rollback artifacts and remove temporary diagnostic tasks.
+- The wrapper image packages and synchronizes only the managed `georgianadaycare` theme idempotently; it must not overwrite unrelated administrator themes.
 
 ### Ask first
 - Creating/pushing the GitHub fork or wrapper repository.

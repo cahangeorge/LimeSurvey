@@ -22,6 +22,21 @@ do
     fi
 done
 
+managed_theme_source=/opt/limesurvey-managed-themes/georgianadaycare
+managed_theme_target=/var/www/html/upload/themes/survey/georgianadaycare
+managed_theme_staging=/var/www/html/upload/themes/survey/.georgianadaycare.staging.$$
+
+if [ -d "$managed_theme_source" ]; then
+    install -d -o www-data -g www-data /var/www/html/upload/themes/survey
+    rm -rf "$managed_theme_staging"
+    cp -R "$managed_theme_source" "$managed_theme_staging"
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R www-data:www-data "$managed_theme_staging"
+    fi
+    rm -rf "$managed_theme_target"
+    mv "$managed_theme_staging" "$managed_theme_target"
+fi
+
 managed_plugin_source=/opt/limesurvey-managed-plugins/ResendEmail
 managed_plugin_target=/var/www/html/plugins/ResendEmail
 managed_plugin_staging=/var/www/html/plugins/.ResendEmail.staging.$$

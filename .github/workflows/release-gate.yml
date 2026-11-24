@@ -43,6 +43,8 @@ jobs:
           docker compose --env-file .env.example config --quiet
           sh -n docker/entrypoint.sh
           sh -n tests/smoke.sh
+          sh -n tests/theme-package.sh
+          ./tests/theme-package.sh
 
       - name: Install test dependencies
         shell: bash

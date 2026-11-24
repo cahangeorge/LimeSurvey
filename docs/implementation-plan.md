@@ -18,6 +18,7 @@ The implementation is intentionally split into bounded phases. The first impleme
 6. **Database-aware backup.** Formbricks PostgreSQL is backed up with `pg_dump`; persistent file data is archived separately. Merely retaining a Docker volume is not accepted as a backup. A restore test and an off-server copy are mandatory before cutover.
 7. **Manual semantic migration.** Formbricks exports are archival/reference material. Active surveys are recreated and verified in LimeSurvey because the products do not share a compatible survey schema.
 8. **Compatibility cutover.** `survey.omnestack.com` is canonical. `feedback.omnestack.com` is redirected or retained as a compatibility route only after dependent integrations are updated and verified.
+9. **GeorgianDaycare embed boundary.** LimeSurvey remains the survey engine and the public survey is embedded cross-origin by a separate Svelte component. The managed `georgianadaycare` theme extends the pinned built-in Fruity theme and owns GeorgianDaycare tokens, iframe-interior visuals, accessibility states, and responsive layout. It emits only `{type: "georgianadaycare:ready"}`, `{type: "georgianadaycare:resize", height}`, and `{type: "georgianadaycare:completion"}` messages, with no response data. Before loading the iframe, the Svelte component sets its `name` to `georgianadaycare:parent-origin:<exact parent origin>`; the theme validates and normalizes that origin, with a cross-origin `document.referrer` fallback when the name contract is absent. Parent CSS cannot style the cross-origin iframe; the Svelte component owns only the outer shell, lazy loading, errors, and focus, and validates message origin, source, and payload shape.
 
 ## Dependency graph
 
@@ -51,6 +52,7 @@ Approved spec and plan
 - Secrets are read only from local secret files or Coolify secret variables and are never echoed, committed, or placed in task output.
 - Database dumps and survey response contents must not appear in Coolify task logs.
 - Temporary Coolify tasks must auto-delete; the remaining task count must return to zero.
+- The wrapper image packages and synchronizes only the managed `georgianadaycare` theme idempotently, without overwriting unrelated administrator themes.
 - DNS/domain, production deployment, credentials, database operations, stopping Formbricks, and deletion are executed only in their named gates.
 - A failed checkpoint stops the sequence. Later phases do not compensate for an unverified earlier gate.
 
@@ -410,6 +412,37 @@ Until then, no deployment is authorized; Formbricks remains unchanged.
 
 **Estimated scope:** Small, 2 files plus LimeSurvey content configuration.
 
+#### Task 13a: Package and verify the GeorgianDaycare embeddable theme
+
+**Description:** Add the managed `georgianadaycare` LimeSurvey theme package as an extension of the pinned built-in Fruity theme. Keep GeorgianDaycare tokens, iframe-interior visuals, accessibility states, responsive layout, and the narrowly scoped `ready`/`resize`/`completion` `postMessage` contract (`type` values `georgianadaycare:ready`, `georgianadaycare:resize` with `height`, and `georgianadaycare:completion`; no response data) inside the theme. Package and synchronize it idempotently in the wrapper image, updating only this managed theme and preserving unrelated administrator themes. The future Svelte embed remains responsible only for the outer shell, lazy loading, errors, focus, and origin/source/shape validation; parent CSS must not style the cross-origin iframe.
+
+**Acceptance criteria:**
+- [x] Theme metadata identifies `georgianadaycare` and its pinned Fruity base; package assets implement the approved tokens, accessible states, and responsive iframe-interior layout.
+- [x] Wrapper-image packaging/sync is repeatable and changes only the managed theme; a second run is a no-op for unrelated administrator themes.
+- [x] Message payloads are limited to the documented `ready`, `resize`, and `completion` events, with origin/source validation owned by the future Svelte component.
+- [x] No production deployment, domain change, credential access, or Formbricks operation is performed in this task.
+
+**Verification:**
+- [x] Static/package checks for theme metadata, assets, and message contract pass.
+- [x] The wrapper image builds and idempotent theme sync passes, including preservation of an unrelated administrator theme.
+- [ ] Browser rendering, keyboard/focus states, responsive layout, and the three message cases remain open: no initialized survey was assigned this theme and viewed in a browser.
+- [x] Stop-before-production boundary passes; production verification remains gated by Checkpoint D and later tasks.
+
+**Current evidence (2026-09-19):** `./tests/theme-package.sh` PASS, including SHA-256 checks for the logo (`a1f4911d7fa80a02eca80d0db2e184d1bc44f7951c1ae6a1ec8a45dcb68aed81`), Nunito Sans Latin subset (`29e3890496844a9ea81975c52771c587c872b4eb317026422d1995b88d21b57d`), Nunito Sans Latin-ext subset (`c648ee5bfda70d44b9fb628f4114d1cc4f984d050cbb4881052237ede3638a2e`), and OFL license (`efbb0c9e864cef973982d9a17567e6be5c3d1759695574586f3f18c7ecca064b`), plus XML/CSS/JS contract checks. `COMPOSE_PROJECT_NAME=limesurvey-georgianadaycare-theme-logo-final ./tests/smoke.sh` PASS, including image build, runtime manifest/assets served, app recreation, sibling-theme preservation, Nginx deny regressions, and DB persistence. Compose render, shell syntax, and PHP lint PASS; PHPUnit PASS with 10 tests and 56 assertions in a no-network container. No production access/deploy, commit, push, or tag occurred.
+
+**Dependencies:** Checkpoint C.
+
+**Actual implementation categories:**
+- Managed theme package: metadata, CSS/assets, logo, Nunito Sans subsets, and OFL license.
+- Runtime integration: wrapper-image packaging and idempotent managed-theme synchronization.
+- Runtime/test integration: package contract checks, local smoke coverage, and release-gate checks.
+
+Implementation was delivered as bounded sub-slices, with at most five files changed in each slice.
+
+**Estimated scope:** Medium, delivered in bounded sub-slices.
+
+**Next step:** Initialize a disposable local survey, install/select `georgianadaycare`, and run browser checks at mobile/desktop plus ready/resize/completion messages before any deployment.
+
 #### Task 14: Replace the Georgiana Daycare Formbricks integration
 
 **Description:** Inspect the Daycare repository's current integration and applicable `AGENTS.md`, then replace only the Formbricks-specific survey embed/link/configuration with the approved LimeSurvey endpoint. Keep consent, accessibility, privacy, and analytics behavior intact.
@@ -424,7 +457,7 @@ Until then, no deployment is authorized; Formbricks remains unchanged.
 - [ ] Use browser validation for the full site-to-survey-to-completion path.
 - [ ] Search the built output for obsolete Formbricks host references.
 
-**Dependencies:** Task 13.
+**Dependencies:** Task 13 and Task 13a.
 
 **Files likely touched:**
 - Exact files are discovered in the Daycare repository before implementation; scope is capped at 5 files for this task.

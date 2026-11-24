@@ -98,6 +98,7 @@ RUN set -eux; \
 
 COPY docker/php/php.ini /usr/local/etc/php/conf.d/zz-limesurvey-production.ini
 COPY --chown=www-data:www-data plugins/ResendEmail /opt/limesurvey-managed-plugins/ResendEmail
+COPY --chown=www-data:www-data themes/georgianadaycare /opt/limesurvey-managed-themes/georgianadaycare
 COPY --chmod=0755 docker/entrypoint.sh /usr/local/bin/limesurvey-entrypoint
 
 EXPOSE 9000

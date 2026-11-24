@@ -9,6 +9,9 @@ runtime_fixture=$runtime_fixture_dir/limesurvey-nginx-protection-smoke-2fb6bdb.t
 upload_survey_dir=/var/www/html/upload/surveys/987654321
 upload_files_dir=$upload_survey_dir/files
 upload_fixture=$upload_files_dir/fu_limesurvey-nginx-protection-smoke-2fb6bdb.txt
+theme_survey_dir=/var/www/html/upload/themes/survey
+theme_smoke_dir=$theme_survey_dir/theme-sync-smoke-2fb6bdb
+theme_smoke_marker=$theme_smoke_dir/marker
 
 compose() {
     docker compose --project-name "$project_name" --env-file "$env_file" "$@"
@@ -16,12 +19,14 @@ compose() {
 
 cleanup() {
     compose exec -T app sh -c '
-        rm -f -- "$1" "$2"
-        rmdir -- "$3" 2>/dev/null || true
+        rm -f -- "$1" "$2" "$3"
         rmdir -- "$4" 2>/dev/null || true
         rmdir -- "$5" 2>/dev/null || true
-    ' sh "$runtime_fixture" "$upload_fixture" "$runtime_fixture_dir" \
-        "$upload_files_dir" "$upload_survey_dir" >/dev/null 2>&1 || true
+        rmdir -- "$6" 2>/dev/null || true
+        rmdir -- "$7" 2>/dev/null || true
+    ' sh "$runtime_fixture" "$upload_fixture" "$theme_smoke_marker" \
+        "$runtime_fixture_dir" "$upload_files_dir" "$upload_survey_dir" \
+        "$theme_smoke_dir" >/dev/null 2>&1 || true
 
     if [ "$keep_stack" != 1 ]; then
         compose down --remove-orphans >/dev/null 2>&1 || true
@@ -74,12 +79,61 @@ wait_for_health() {
     return 1
 }
 
+assert_managed_theme() {
+    compose exec -T app sh -eu -c '
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/config.xml
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/css/georgianadaycare.css
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/files/logo.png
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/scripts/embed.js
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/fonts/nunito-sans-latin-ext-wght.woff2
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/fonts/nunito-sans-latin-wght.woff2
+        test -f /var/www/html/upload/themes/survey/georgianadaycare/fonts/OFL-Nunito-Sans.txt
+        php -r '\''
+            $config = simplexml_load_file("/var/www/html/upload/themes/survey/georgianadaycare/config.xml");
+            if ($config === false
+                || (string) $config->metadata->name !== "georgianadaycare"
+                || (string) $config->metadata->extends !== "fruity"
+                || (string) $config->compatibility->version !== "7.0") {
+                fwrite(STDERR, "GeorgianDaycare metadata is unavailable.\n");
+                exit(1);
+            }
+        '\''
+    '
+}
+
+assert_managed_theme_assets() {
+    compose exec -T nginx wget -qO- \
+        http://127.0.0.1/upload/themes/survey/georgianadaycare/css/georgianadaycare.css \
+        | grep -Fq -- '--canvas: #fffaf4'
+    compose exec -T nginx wget -qO /dev/null \
+        http://127.0.0.1/upload/themes/survey/georgianadaycare/fonts/nunito-sans-latin-ext-wght.woff2
+    compose exec -T nginx wget -qO /dev/null \
+        http://127.0.0.1/upload/themes/survey/georgianadaycare/fonts/nunito-sans-latin-wght.woff2
+    compose exec -T nginx wget -qO /dev/null \
+        http://127.0.0.1/upload/themes/survey/georgianadaycare/files/logo.png
+}
+
 compose config --quiet
 compose up -d --build
 
 wait_for_health db 45
 wait_for_health app 45
 wait_for_health nginx 45
+
+assert_managed_theme
+assert_managed_theme_assets
+
+compose exec -T app sh -eu -c '
+    mkdir "$1"
+    printf "%s\n" theme-sync-smoke > "$2"
+' sh "$theme_smoke_dir" "$theme_smoke_marker"
+
+compose up -d --force-recreate app
+wait_for_health app 45
+assert_managed_theme
+compose exec -T app test -f "$theme_smoke_marker"
+wait_for_health nginx 45
+assert_managed_theme_assets
 
 db_container=$(container_for_service db)
 if docker port "$db_container" 3306/tcp 2>/dev/null | grep -q .; then

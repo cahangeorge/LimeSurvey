@@ -61,7 +61,8 @@ class SigningGateTests(unittest.TestCase):
     def outputs(self):
         c = self.context()
         signature = json.dumps([{"critical": {"image": {"docker-manifest-digest": self.digest},
-                                              "identity": {"docker-reference": self.image.split("@")[0]}}}])
+                                              "identity": {"docker-reference": self.image},
+                                              "type": "https://sigstore.dev/cosign/sign/v1"}}])
         return [signature, self.envelope(gate.PROVENANCE_TYPE, c["provenance"]),
                 self.envelope(gate.SBOM_TYPE, self.sbom)]
 
@@ -147,6 +148,30 @@ class SigningGateTests(unittest.TestCase):
             with self.assertRaises(gate.GateError):
                 self.verify()
 
+    def test_attestation_claims_are_not_image_signatures(self):
+        for kind in (gate.PROVENANCE_TYPE, gate.SBOM_TYPE, "unknown", None):
+            with self.subTest(kind=kind):
+                outputs = self.outputs()
+                claim = json.loads(outputs[0])
+                claim[0]["critical"]["type"] = kind
+                outputs[0] = json.dumps(claim)
+                with patch.object(gate, "cosign", side_effect=outputs):
+                    with self.assertRaises(gate.GateError):
+                        self.verify()
+                self.assertFalse((self.root / "signing.json").exists())
+
+    def test_signature_reference_must_include_exact_digest(self):
+        for reference in (self.image.split("@")[0], self.image.split("@")[0] + ":latest",
+                          self.image.split("@")[0] + "@sha256:" + "b" * 64):
+            with self.subTest(reference=reference):
+                outputs = self.outputs()
+                claim = json.loads(outputs[0])
+                claim[0]["critical"]["identity"]["docker-reference"] = reference
+                outputs[0] = json.dumps(claim)
+                with patch.object(gate, "cosign", side_effect=outputs):
+                    with self.assertRaises(gate.GateError):
+                        self.verify()
+
     def test_evidence_changed_while_verifier_runs_blocks(self):
         outputs = iter(self.outputs())
         def verifier(_arguments):
@@ -219,7 +244,8 @@ class SigningGateTests(unittest.TestCase):
                 self.write_release()
                 ctx = gate.context(self.root, component, self.sha, self.run, self.attempt)
                 signature = json.dumps([{"critical": {"image": {"docker-manifest-digest": self.digest},
-                                                       "identity": {"docker-reference": base}}}])
+                                                       "identity": {"docker-reference": self.image},
+                                                       "type": "https://sigstore.dev/cosign/sign/v1"}}])
                 outputs = ["", "", "", signature, self.envelope(gate.PROVENANCE_TYPE, ctx["provenance"]),
                            self.envelope(gate.SBOM_TYPE, self.sbom)]
                 env = {"GITHUB_REPOSITORY": "cahangeorge/LimeSurvey", "GITHUB_REF": "refs/heads/main",

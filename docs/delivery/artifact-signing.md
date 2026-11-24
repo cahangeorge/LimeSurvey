@@ -107,6 +107,26 @@ GitHub workflow source SHA, the image digest and the expected predicate bytes as
 JSON values. The helper consumes verifier output only after Cosign succeeds.
 This does not assert a SLSA assurance level.
 
+## Cosign v3 registry envelope correction
+
+The first live publisher on integrated source `b504af2` wrote a valid image
+signature and both attestations, but the helper rejected the verifier's actual
+v3 output. Its `critical.identity.docker-reference` contains the complete
+`repository@sha256:digest`, rather than a bare repository. The bounded correction
+touches only this document, the signing helper and its tests. Verification now
+requires the exact digest-qualified reference and
+`critical.type == https://sigstore.dev/cosign/sign/v1`. Cosign may also return
+verified provenance/SBOM claims from OCI referrers; those alone cannot substitute
+for the required image signature. Repository-only, other-digest, unknown-type
+and attestation-only claims remain rejected. Exact certificate identity, issuer,
+source commit, transparency, attestation subjects and evidence binding remain
+mandatory. No insecure verification option or security-policy waiver is added.
+
+Regression tests reproduce the original failure with the real v3 claim shape.
+Acceptance also requires read-only cryptographic verification of the existing
+digest and a corrected hosted publisher; the first failed run remains a failed
+run and cannot be promoted.
+
 References: [Sigstore CI](https://docs.sigstore.dev/quickstart/quickstart-ci/),
 [pinned installer](https://github.com/sigstore/cosign-installer/blob/ba7bc0a3fef59531c69a25acd34668d6d3fe6f22/action.yml),
 [Cosign attestation implementation](https://github.com/sigstore/cosign/blob/11926fa5bbbbde47e88fc006b625a17769b743b2/pkg/cosign/attestation/attestation.go),

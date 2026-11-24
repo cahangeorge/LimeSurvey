@@ -1,0 +1,27 @@
+[Unit]
+Description=LimeSurvey anonymous response retention
+After=network.target
+
+[Service]
+Type=oneshot
+User=limesurvey-retention
+Group=limesurvey-retention
+ExecStart=/usr/bin/python3 /opt/limesurvey/scripts/retention.py --config /etc/limesurvey-retention/config.json --apply
+TimeoutStartSec=210
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/limesurvey-retention
+RestrictAddressFamilies=AF_INET AF_INET6
+IPAddressDeny=any
+IPAddressAllow=localhost
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
